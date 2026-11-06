@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Velocímetro estilizado: arco con degradado cian→ámbar y aguja -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Arco de fondo -->
+    <path
+        android:pathData="M33,70 A24,24 0 1,1 75,70"
+        android:strokeWidth="7"
+        android:strokeColor="#2A3646"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Arco activo -->
+    <path
+        android:pathData="M33,70 A24,24 0 0,1 54,30"
+        android:strokeWidth="7"
+        android:strokeColor="#22D3EE"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,30 A24,24 0 0,1 71,37"
+        android:strokeWidth="7"
+        android:strokeColor="#F59E0B"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Aguja -->
+    <path
+        android:pathData="M54,56 L68,40"
+        android:strokeWidth="4"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M54,56 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Línea de pulso -->
+    <path
+        android:pathData="M36,78 L46,78 L50,72 L55,84 L59,76 L72,76"
+        android:strokeWidth="3"
+        android:strokeColor="#34D399"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>
