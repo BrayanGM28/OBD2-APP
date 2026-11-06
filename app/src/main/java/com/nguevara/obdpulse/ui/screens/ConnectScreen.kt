@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -70,6 +71,7 @@ import com.nguevara.obdpulse.ui.components.InfoRow
 import com.nguevara.obdpulse.ui.components.Pill
 import com.nguevara.obdpulse.ui.components.SectionCard
 import com.nguevara.obdpulse.ui.theme.Palette
+import com.nguevara.obdpulse.vehicle.OnlineService
 
 private fun requiredPermissions(): Array<String> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -87,6 +89,9 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
     val context = LocalContext.current
     val devices by vm.scanner.devices.collectAsStateWithLifecycle()
     val scanning by vm.scanner.scanning.collectAsStateWithLifecycle()
+    val profile by vm.activeProfile.collectAsStateWithLifecycle()
+    val protoScan by vm.protoScan.collectAsStateWithLifecycle()
+    var showGarage by remember { mutableStateOf(false) }
     var permissionDenied by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
@@ -159,6 +164,80 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
                 },
                 onDismiss = { vm.dismissError() },
             )
+        }
+
+        if (conn !is ConnState.Connecting) {
+            item { ActiveVehicleCard(vm, profile) { showGarage = true } }
+        }
+
+        // La ECU no respondió con el orden recomendado: ofrecer el escaneo completo y la búsqueda en internet.
+        val connectedNoEcu = conn is ConnState.Connected && !conn.info.ecuOk
+        if (connectedNoEcu || protoScan.loading || protoScan.results.isNotEmpty()) {
+            item {
+                SectionCard(title = "Encontrar el protocolo") {
+                    if (protoScan.loading) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(22.dp), color = Palette.Cyan, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text(protoScan.step, fontSize = 14.sp, color = Palette.TextSecondary)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text("Cada protocolo K-Line tarda hasta 12 s. Mantén el motor encendido.", fontSize = 12.sp, color = Palette.TextMuted)
+                    } else {
+                        Text(
+                            "Prueba los 10 protocolos del ELM327 uno por uno (1–2 minutos) para saber con cuál responde tu vehículo.",
+                            fontSize = 13.sp,
+                            color = Palette.TextSecondary,
+                            lineHeight = 18.sp,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { vm.scanAllProtocols() },
+                                enabled = conn is ConnState.Connected,
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Probar todos") }
+                            val prof = profile
+                            if (prof != null) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(OnlineService.protocolSearchUrl(prof))))
+                                        } catch (_: Exception) {
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) { Text("Buscar en internet") }
+                            }
+                        }
+                    }
+                    protoScan.error?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Notice(it, Palette.Red)
+                    }
+                    if (protoScan.results.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        protoScan.results.forEach { r ->
+                            Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(r.name, fontSize = 14.sp, color = if (r.ok) Palette.Green else Palette.TextPrimary)
+                                    Text("ATSP${r.code} · ${r.detail}", fontSize = 12.sp, color = Palette.TextMuted)
+                                }
+                                if (r.ok) Button(onClick = { vm.useProtocol(r.code) }) { Text("Usar") }
+                            }
+                        }
+                        if (protoScan.results.none { it.ok }) {
+                            Spacer(Modifier.height(8.dp))
+                            Notice(
+                                "Ningún protocolo respondió. Con el motor encendido y un adaptador que funciona en otros carros, " +
+                                    "lo más probable es que la ECU no hable OBD-II genérico (solo el protocolo propio de la marca) " +
+                                    "o que el circuito K-Line del adaptador no funcione.",
+                                Palette.Amber,
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         if (conn !is ConnState.Connected) {
@@ -243,6 +322,8 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
             }
         }
     }
+
+    if (showGarage) GarageDialog(vm) { showGarage = false }
 }
 
 @Composable
@@ -286,6 +367,13 @@ private fun StatusCard(
                 InfoRow("Adaptador", info.elmVersion)
                 InfoRow("Protocolo", info.protocol)
                 InfoRow("VIN", info.vin ?: "No disponible")
+                if (info.attempts.size > 1 || !info.ecuOk) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Protocolos probados", fontSize = 12.sp, color = Palette.TextSecondary)
+                    info.attempts.forEach { (code, result) ->
+                        InfoRow(shortProtocol(code), result, if (result == "Responde") Palette.Green else Palette.TextMuted)
+                    }
+                }
                 if (!info.ecuOk && info.ecuMessage != null) {
                     Spacer(Modifier.height(8.dp))
                     Notice(info.ecuMessage, Palette.Amber)

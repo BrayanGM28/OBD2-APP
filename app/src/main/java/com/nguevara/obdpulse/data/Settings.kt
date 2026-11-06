@@ -4,6 +4,7 @@ import android.content.Context
 import com.nguevara.obdpulse.bt.LinkType
 import com.nguevara.obdpulse.bt.ObdDevice
 import com.nguevara.obdpulse.obd.Metric
+import com.nguevara.obdpulse.vehicle.OnlineService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +27,10 @@ data class AppSettings(
     val pollDelayMs: Int = 0,
     val keepScreenOn: Boolean = true,
     val lastDevice: ObdDevice? = null,
+    /** Vehículo del garaje en uso (null = ninguno: se usan los valores de arriba). */
+    val activeProfileId: String? = null,
+    /** De dónde se descarga la base de vehículos actualizada. */
+    val dbUrl: String = OnlineService.DEFAULT_DB_URL,
 )
 
 /** Persistencia sencilla en SharedPreferences. */
@@ -64,6 +69,8 @@ class SettingsStore(context: Context) {
             pollDelayMs = prefs.getInt("poll_delay", 0),
             keepScreenOn = prefs.getBoolean("keep_screen", true),
             lastDevice = last,
+            activeProfileId = prefs.getString("active_profile", null),
+            dbUrl = prefs.getString("db_url", null)?.takeIf { it.isNotBlank() } ?: OnlineService.DEFAULT_DB_URL,
         )
     }
 
@@ -77,6 +84,9 @@ class SettingsStore(context: Context) {
             putString("protocol", s.protocol)
             putInt("poll_delay", s.pollDelayMs)
             putBoolean("keep_screen", s.keepScreenOn)
+            putString("active_profile", s.activeProfileId)
+            // Solo se guarda si el usuario la cambió: así una versión nueva de la app puede cambiar la URL por defecto.
+            if (s.dbUrl == OnlineService.DEFAULT_DB_URL) remove("db_url") else putString("db_url", s.dbUrl)
             val d = s.lastDevice
             if (d != null && d.type != LinkType.DEMO) {
                 putString("last_name", d.name)

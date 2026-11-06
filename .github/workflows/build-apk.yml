@@ -2,7 +2,7 @@ name: Compilar APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'feature/**' ]
   workflow_dispatch:
 
 permissions:
@@ -44,4 +44,5 @@ jobs:
           name: OBD Pulse build ${{ github.run_number }}
           body: APK compilado automáticamente. Descárgalo desde el celular e instálalo.
           files: OBDPulse.apk
+          target_commitish: ${{ github.sha }}
           fail_on_unmatched_files: true

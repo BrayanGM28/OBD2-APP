@@ -14,7 +14,8 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * Simulador de un ELM327 conectado a un carro a gasolina con CAN 11 bit / 500 kbps.
+ * Simulador de un ELM327 conectado a un carro a gasolina turbo con CAN 11 bit / 500 kbps,
+ * con dos módulos: motor (7E8) y transmisión (7E9).
  * Responde a los mismos comandos que un adaptador real, así toda la app (parser incluido)
  * se puede probar sin estar en el carro.
  */
@@ -35,6 +36,9 @@ class DemoTransport : ObdTransport {
     // Estado configurable del "chip" ELM327
     private var echo = true
     private var spaces = true
+    private var headers = false
+    /** Cabecera de petición (ATSH): 7DF = todos, 7E0 = motor, 7E1 = transmisión. */
+    private var target = "7DF"
 
     // Códigos de falla simulados (2 bytes cada uno, en hex)
     private val storedDtcs = mutableListOf("0301", "0420") // P0301, P0420
@@ -78,6 +82,15 @@ class DemoTransport : ObdTransport {
     private fun respond(cmd: String): String {
         if (cmd.startsWith("AT")) return respondAt(cmd.substring(2))
         car.update()
+        if (target == "7E1") return transmission(cmd)
+        if (headers && cmd == "0100") {
+            // Con cabeceras: cada módulo se identifica con su dirección CAN.
+            val engine = "4100" + bitmap(0x00)
+            val tcm = "4100" + "80000000"
+            return listOf("7E8" to engine, "7E9" to tcm).joinToString("\r") { (h, d) ->
+                (h + String.format(Locale.US, "%02X", d.length / 2) + d).let { if (spaces) "$h " + (String.format(Locale.US, "%02X", d.length / 2) + d).chunked(2).joinToString(" ") else it }
+            }
+        }
         return when {
             cmd.length >= 4 && cmd.startsWith("01") -> mode01(cmd.substring(2, 4).toInt(16))
             cmd.length >= 4 && cmd.startsWith("02") -> mode02(cmd.substring(2, 4).toInt(16))
@@ -91,8 +104,25 @@ class DemoTransport : ObdTransport {
             }
 
             cmd == "0902" -> vinResponse()
+            cmd == "0900" -> ("4900" + infoBitmap(setOf(0x02, 0x04, 0x06, 0x0A))).spaced()
+            cmd == "0904" -> isoTp("490401" + asciiHex("NSDEMO-A23C01", 16))
+            cmd == "0906" -> ("490601" + "1A2B3C4D").spaced()
+            cmd == "090A" -> isoTp("490A01" + asciiHex("ECM\u0000-EngineControl", 20))
+            cmd == "0600" -> ("4600" + "C0000001").spaced()
+            cmd == "0800" -> ("4800" + "40000000").spaced()
             else -> "NO DATA"
         }
+    }
+
+    /** Respuestas del módulo de transmisión (cuando se le habla directo con ATSH7E1). */
+    private fun transmission(cmd: String): String = when (cmd) {
+        "0100" -> ("4100" + "80000000").spaced()
+        "0101" -> ("4101" + "00000000").spaced()
+        "0900" -> ("4900" + infoBitmap(setOf(0x04, 0x06, 0x0A))).spaced()
+        "0904" -> isoTp("490401" + asciiHex("TCM-AW55-0712", 16))
+        "0906" -> ("490601" + "77AA0912").spaced()
+        "090A" -> isoTp("490A01" + asciiHex("TCM\u0000-TransmisionCtrl", 20))
+        else -> "NO DATA"
     }
 
     private fun respondAt(at: String): String = when {
@@ -108,6 +138,9 @@ class DemoTransport : ObdTransport {
         at == "E1" -> { echo = true; "OK" }
         at == "S0" -> { spaces = false; "OK" }
         at == "S1" -> { spaces = true; "OK" }
+        at == "H0" -> { headers = false; "OK" }
+        at == "H1" -> { headers = true; "OK" }
+        at.startsWith("SH") -> { target = at.substring(2); "OK" }
         at == "RV" -> String.format(Locale.US, "%.1fV", car.voltage)
         at == "DPN" -> "A6"
         at == "DP" -> "AUTO, ISO 15765-4 (CAN 11/500)"
@@ -117,15 +150,29 @@ class DemoTransport : ObdTransport {
     /** PIDs que el carro simulado "soporta". */
     private val supported = sortedSetOf(
         0x01, 0x04, 0x05, 0x06, 0x07, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x14, 0x15,
-        0x1F, 0x21, 0x2F, 0x31, 0x33, 0x3C, 0x42, 0x44, 0x45, 0x46, 0x49, 0x5C,
+        0x1C, 0x1F, 0x21, 0x24, 0x2E, 0x2F, 0x30, 0x31, 0x33, 0x3C, 0x42, 0x44, 0x45, 0x46, 0x49,
+        0x4D, 0x4E, 0x5A, 0x5C, 0x61, 0x62, 0x63, 0x67, 0x70, 0x87, 0xA6,
     )
 
     private fun mode01(pid: Int): String {
         if (pid % 0x20 == 0) return ("41" + hex(pid) + bitmap(pid)).spaced()
         if (pid !in supported) return "NO DATA"
         val data = pidData(pid) ?: return "NO DATA"
-        return ("41" + hex(pid) + data).spaced()
+        val payload = "41" + hex(pid) + data
+        // CAN: más de 7 bytes no caben en una trama → respuesta multi-trama ISO-TP.
+        return if (payload.length / 2 > 7) isoTp(payload) else payload.spaced()
     }
+
+    /** Mapa de bits de tipos de información del modo 09 (tipo 1 = bit más significativo). */
+    private fun infoBitmap(types: Set<Int>): String {
+        var mask = 0L
+        for (t in types) mask = mask or (1L shl (32 - t))
+        return String.format(Locale.US, "%08X", mask)
+    }
+
+    /** Texto → hex ASCII rellenado con 00 hasta [len] bytes. */
+    private fun asciiHex(text: String, len: Int): String =
+        text.take(len).map { hex(it.code) }.joinToString("").padEnd(len * 2, '0')
 
     private fun mode02(pid: Int): String {
         return when (pid) {
@@ -171,7 +218,26 @@ class DemoTransport : ObdTransport {
             0x05 -> hex((coolant + 40).toInt())
             0x06 -> hex(128 + Random.nextInt(-6, 7))
             0x07 -> hex(131)
-            0x0B -> hex(map.toInt())
+            0x0B -> hex(map.toInt().coerceAtMost(255))
+            0x1C -> hex(0x0A) // EOBD + OBD-II
+            0x24 -> hex4((lambda * 32768).toInt()) + hex4(0x8000)
+            0x2E -> hex((if (speed > 10) 22.0 else 0.0) * 2.55)
+            0x30 -> hex(12)
+            0x4D -> hex4(0)
+            0x4E -> hex4(3100)
+            0x5A -> hex(pedal * 2.55)
+            0x61 -> hex((pedal * 0.9 + 125).toInt())
+            0x62 -> hex((load * 0.85 + 125).toInt())
+            0x63 -> hex4(250)
+            0x67 -> hex(0x01) + hex((coolant + 40).toInt()) + hex(0)
+            0x70 -> {
+                // A=03 (comandada y real A) · B-C comandada · D-E real · F-G, H-I sensor B · J estado
+                val cmdBoost = ((map + 6) * 32).toInt()
+                val actual = (map * 32).toInt()
+                hex(0x03) + hex4(cmdBoost) + hex4(actual) + "0000" + "0000" + "00"
+            }
+            0x87 -> hex(0x01) + hex4((map * 32).toInt())
+            0xA6 -> String.format(Locale.US, "%08X", (842134 + runtime / 10).toLong())
             0x0C -> hex4((rpm * 4).toInt())
             0x0D -> hex(speed.toInt())
             0x0E -> hex(((timing + 64) * 2).toInt())
@@ -205,7 +271,11 @@ class DemoTransport : ObdTransport {
     /** VIN en multi-trama ISO-TP: longitud, luego tramas 0:, 1:, 2: */
     private fun vinResponse(): String {
         val vin = "9BWZZZ377VT004251"
-        val payload = "490201" + vin.map { hex(it.code) }.joinToString("")
+        return isoTp("490201" + vin.map { hex(it.code) }.joinToString(""))
+    }
+
+    /** Formato del ELM327 para respuestas CAN largas: línea de longitud y tramas "0:", "1:"… */
+    private fun isoTp(payload: String): String {
         val bytes = payload.chunked(2)
         val frames = mutableListOf<String>()
         frames += String.format(Locale.US, "%03X", bytes.size)
@@ -291,7 +361,7 @@ private class CarSimulator {
         rpm += (targetRpm - rpm) * min(1.0, dt * 3.0) + Random.nextDouble(-15.0, 15.0)
 
         load = (18 + pedal * 1.1 + rpm / 200).coerceIn(10.0, 100.0)
-        map = (28 + pedal * 0.9).coerceIn(25.0, 82.0)
+        map = (30 + pedal * 1.9).coerceIn(28.0, 165.0) // turbo: hasta ~0,8 bar sobre la presión de Bogotá
         maf = rpm / 120.0 * 0.85 * (map * 1.6) / (8.314 * (intakeTemp + 273.15)) * 28.97
         timing = 8 + rpm / 400 - pedal / 10
         coolant = min(90.0, coolant + dt * 0.9)

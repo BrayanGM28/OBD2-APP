@@ -12,16 +12,20 @@ import com.nguevara.obdpulse.bt.ObdDevice
 import com.nguevara.obdpulse.bt.ObdTransport
 import com.nguevara.obdpulse.bt.TransportException
 import com.nguevara.obdpulse.data.AppSettings
+import com.nguevara.obdpulse.data.GarageStore
 import com.nguevara.obdpulse.data.SettingsStore
+import com.nguevara.obdpulse.data.VehicleDbStore
 import com.nguevara.obdpulse.data.TripRecorder
 import com.nguevara.obdpulse.data.TripState
 import com.nguevara.obdpulse.obd.DtcInfo
 import com.nguevara.obdpulse.obd.DtcItem
 import com.nguevara.obdpulse.obd.DtcKind
+import com.nguevara.obdpulse.obd.EcuModule
 import com.nguevara.obdpulse.obd.Elm327
 import com.nguevara.obdpulse.obd.FreezeFrame
 import com.nguevara.obdpulse.obd.Metric
 import com.nguevara.obdpulse.obd.Metrics
+import com.nguevara.obdpulse.obd.ProtocolProbe
 import com.nguevara.obdpulse.obd.TermLine
 import com.nguevara.obdpulse.obd.VehicleInfo
 import com.nguevara.obdpulse.obd.VehicleStatus
@@ -30,13 +34,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import com.nguevara.obdpulse.vehicle.OnlineService
+import com.nguevara.obdpulse.vehicle.ProtocolAdvisor
+import com.nguevara.obdpulse.vehicle.ProtocolRecommendation
+import com.nguevara.obdpulse.vehicle.VehicleDb
+import com.nguevara.obdpulse.vehicle.VehicleProfile
+import com.nguevara.obdpulse.vehicle.VinDecoder
+import com.nguevara.obdpulse.vehicle.VinInfo
 import java.io.File
 
 sealed interface ConnState {
@@ -47,6 +67,23 @@ sealed interface ConnState {
 }
 
 data class Sample(val t: Long, val v: Double)
+
+/** Verificación de módulos (solo lectura). */
+data class ModuleScanState(
+    val loading: Boolean = false,
+    val step: String = "",
+    val modules: List<EcuModule> = emptyList(),
+    val readAt: Long? = null,
+    val error: String? = null,
+)
+
+/** Escaneo de todos los protocolos. */
+data class ProtocolScanState(
+    val loading: Boolean = false,
+    val step: String = "",
+    val results: List<ProtocolProbe> = emptyList(),
+    val error: String? = null,
+)
 
 data class DiagState(
     val loading: Boolean = false,
@@ -65,6 +102,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val scanner = DeviceScanner(app)
     private val tripRecorder = TripRecorder(File(app.filesDir, "trips"))
+
+    // ---- Garaje y base de vehículos ----
+    private val garage = GarageStore(app)
+    val profiles: StateFlow<List<VehicleProfile>> = garage.profiles
+    private val dbStore = VehicleDbStore(app)
+    val vehicleDb: StateFlow<VehicleDb> = dbStore.db
+    val dbOrigin: String get() = dbStore.origin
+
+    /** Vehículo en uso (o null si no se eligió ninguno). */
+    val activeProfile: StateFlow<VehicleProfile?> = combine(settings, profiles) { st, list ->
+        list.firstOrNull { it.id == st.activeProfileId }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, garage.get(settingsStore.current.activeProfileId))
+
+    private val _dbStatus = MutableStateFlow<String?>(null)
+    val dbStatus: StateFlow<String?> = _dbStatus.asStateFlow()
+    private val _dbUpdating = MutableStateFlow(false)
+    val dbUpdating: StateFlow<Boolean> = _dbUpdating.asStateFlow()
+
+    private val _modules = MutableStateFlow(ModuleScanState())
+    val modules: StateFlow<ModuleScanState> = _modules.asStateFlow()
+
+    private val _protoScan = MutableStateFlow(ProtocolScanState())
+    val protoScan: StateFlow<ProtocolScanState> = _protoScan.asStateFlow()
+
+    /** Mensajes cortos para mostrar como aviso emergente. */
+    private val _toasts = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val toasts: SharedFlow<String> = _toasts.asSharedFlow()
+
+    /** El sondeo en vivo toma este candado por ciclo; los escaneos lo toman para tener el bus solo para ellos. */
+    private val cycleLock = Mutex()
 
     private val _conn = MutableStateFlow<ConnState>(ConnState.Idle)
     val conn: StateFlow<ConnState> = _conn.asStateFlow()
@@ -146,13 +213,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 elm = e
                 startLogCollector(e)
                 e.info("Conectado a ${device.name} (${device.type.label})")
-                val info = e.initialize(settings.value.protocol) { step ->
+                val profile = activeProfile.value
+                val rec = profile?.let { recommendation(it) }
+                val candidates = when {
+                    device.type == LinkType.DEMO -> listOf("0")
+                    rec != null -> rec.candidates
+                    else -> listOf(settings.value.protocol)
+                }
+                if (profile != null && device.type != LinkType.DEMO) {
+                    e.info("Vehículo: ${profile.title} ${profile.year} · orden de protocolos: ${candidates.joinToString(" → ")}")
+                }
+                val info = e.initialize(candidates, slowEcu = rec?.slowEcu == true && device.type != LinkType.DEMO) { step ->
                     _conn.value = ConnState.Connecting(device, step)
                 }
                 clearLive()
                 _diag.value = DiagState()
+                _modules.value = ModuleScanState()
                 _conn.value = ConnState.Connected(device, info)
-                if (device.type != LinkType.DEMO) settingsStore.update { it.copy(lastDevice = device) }
+                if (device.type != LinkType.DEMO) {
+                    settingsStore.update { it.copy(lastDevice = device) }
+                    if (profile != null && info.ecuOk) learnFromConnection(profile, info)
+                }
                 startPolling(e, info)
             } catch (ce: CancellationException) {
                 t.close()
@@ -226,11 +307,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             Metrics.VOLTAGE -> true
             Metrics.FUEL_RATE -> canComputeFuelRate(s)
             Metrics.ECONOMY -> canComputeFuelRate(s) && 0x0D in s
+            Metrics.BOOST -> 0x0B in s || 0x87 in s || 0x70 in s
+            Metrics.TORQUE -> 0x62 in s && 0x63 in s
+            Metrics.POWER -> (0x62 in s && 0x63 in s && 0x0C in s) || (0x10 in s && !settings.value.diesel)
+            Metrics.ACCEL -> 0x0D in s
+            Metrics.AFR -> 0x24 in s || 0x44 in s
             else -> Metrics[key]?.pid?.let { it in s } ?: false
         }
     }
 
     fun availableMetrics(): List<Metric> = Metrics.all.filter { isAvailable(it.key) }
+
+    /** PIDs que la ECU reporta pero la app no decodifica (se pueden leer en crudo). */
+    fun undecodedPids(): List<Int> {
+        val s = connectedInfo?.supportedPids ?: return emptyList()
+        return s.filter { it % 0x20 != 0 && it !in Metrics.decodedPids }.sorted()
+    }
 
     private fun canComputeFuelRate(s: Set<Int>): Boolean =
         0x5E in s || 0x10 in s || (0x0B in s && 0x0C in s && 0x0F in s)
@@ -246,6 +338,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         out += keys
         val recording = tripRecorder.state.active
         if (recording) out += TRIP_KEYS
+        if (Metrics.BOOST in out) {
+            out += when {
+                0x70 in s -> "0170"
+                0x87 in s -> Metrics.MAP_EXT
+                else -> Metrics.MAP
+            }
+            out += Metrics.BARO
+        }
+        if (Metrics.TORQUE in out || Metrics.POWER in out) {
+            out += Metrics.TORQUE_ACTUAL
+            out += Metrics.TORQUE_REF
+            out += Metrics.RPM
+            if (Metrics.POWER in out && !(0x62 in s && 0x63 in s)) out += Metrics.MAF
+        }
+        if (Metrics.ACCEL in out) out += Metrics.SPEED
+        if (Metrics.AFR in out) out += if (0x24 in s) Metrics.LAMBDA_WIDE else Metrics.LAMBDA_CMD
         if (Metrics.FUEL_RATE in out || Metrics.ECONOMY in out) {
             out += Metrics.SPEED
             when {
@@ -293,17 +401,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 continue
             }
 
-            for (m in pidMetrics) {
-                // Las magnitudes lentas (temperaturas, nivel…) se leen 1 de cada 4 ciclos.
-                if (!m.fast && cycle % 4 != 0L && _values.value.containsKey(m.key)) continue
-                val v = e.readMetric(m) ?: continue
-                store(m.key, v)
-            }
+            cycleLock.withLock {
+                for (m in pidMetrics) {
+                    // Las magnitudes lentas (temperaturas, nivel…) se leen 1 de cada 4 ciclos.
+                    if (!m.fast && cycle % 4 != 0L && _values.value.containsKey(m.key)) continue
+                    val v = e.readMetric(m) ?: continue
+                    store(m.key, v)
+                }
 
-            val now = System.currentTimeMillis()
-            if (wantsVoltage && now - lastVoltageMs > 3_000) {
-                e.readVoltage()?.let { store(Metrics.VOLTAGE, it) }
-                lastVoltageMs = now
+                val now = System.currentTimeMillis()
+                if (wantsVoltage && now - lastVoltageMs > 3_000) {
+                    e.readVoltage()?.let { store(Metrics.VOLTAGE, it) }
+                    lastVoltageMs = now
+                }
             }
 
             computeDerived(info.supportedPids)
@@ -366,11 +476,56 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 store(Metrics.ECONOMY, kmPerL)
             }
         }
+
+        // Turbo: presión absoluta del múltiple − presión atmosférica (kPa → bar).
+        val absolute = v["0170"] ?: v[Metrics.MAP_EXT] ?: v[Metrics.MAP]
+        if (absolute != null && (0x0B in s || 0x87 in s || 0x70 in s)) {
+            val baro = v[Metrics.BARO] ?: 101.3
+            store(Metrics.BOOST, (absolute - baro) / 100.0)
+        }
+
+        // Torque y potencia: % de torque real × torque de referencia (PID 62 y 63).
+        val torquePct = v[Metrics.TORQUE_ACTUAL]
+        val torqueRef = v[Metrics.TORQUE_REF]
+        if (torquePct != null && torqueRef != null) {
+            val nm = (torquePct / 100.0 * torqueRef).coerceAtLeast(0.0)
+            store(Metrics.TORQUE, nm)
+            if (rpm != null) store(Metrics.POWER, nm * rpm / 9549.0 * 1.341) // kW → hp
+        } else if (maf != null && !st.diesel && 0x10 in s) {
+            // Regla práctica para gasolina en mezcla estequiométrica: ≈ 1,32 hp por g/s de aire.
+            store(Metrics.POWER, maf * 1.32)
+        }
+
+        // Aceleración a partir de dos lecturas de velocidad consecutivas.
+        val cur = lastSpeedSample
+        val prev = prevSpeedSample
+        if (cur != null && prev != null && cur.t != lastAccelT) {
+            val dt = (cur.t - prev.t) / 1000.0
+            if (dt in 0.1..3.0) {
+                val g = (cur.v - prev.v) / 3.6 / dt / 9.81
+                accelEma = 0.5 * accelEma + 0.5 * g
+                store(Metrics.ACCEL, accelEma.coerceIn(-1.5, 1.5))
+            }
+            lastAccelT = cur.t
+        }
+
+        // Relación aire/combustible = lambda × estequiométrica.
+        val lambda = v[Metrics.LAMBDA_WIDE] ?: v[Metrics.LAMBDA_CMD]
+        if (lambda != null && lambda > 0.3) store(Metrics.AFR, lambda * afr)
     }
+
+    @Volatile private var lastSpeedSample: Sample? = null
+    @Volatile private var prevSpeedSample: Sample? = null
+    private var lastAccelT = 0L
+    private var accelEma = 0.0
 
     private fun store(key: String, v: Double) {
         _values.update { it + (key to v) }
         val now = System.currentTimeMillis()
+        if (key == Metrics.SPEED) {
+            prevSpeedSample = lastSpeedSample
+            lastSpeedSample = Sample(now, v)
+        }
         synchronized(history) {
             val q = history.getOrPut(key) { ArrayDeque() }
             q.addLast(Sample(now, v))
@@ -382,6 +537,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun clearLive() {
         _values.value = emptyMap()
+        lastSpeedSample = null
+        prevSpeedSample = null
+        accelEma = 0.0
         synchronized(history) { history.clear() }
         _historyTick.update { it + 1 }
     }
@@ -517,6 +675,178 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ------------------------------------------------------------------
+    // Garaje y protocolos
+    // ------------------------------------------------------------------
+
+    fun recommendation(p: VehicleProfile): ProtocolRecommendation = ProtocolAdvisor.recommend(p, vehicleDb.value)
+
+    /** Guarda el perfil y, si es el activo (o [activate]), aplica sus datos al cálculo de consumo y tacómetro. */
+    fun saveProfile(p: VehicleProfile, activate: Boolean) {
+        garage.upsert(p)
+        if (activate || settings.value.activeProfileId == p.id) applyProfile(p)
+    }
+
+    fun selectProfile(id: String?) {
+        val p = garage.get(id)
+        if (p == null) {
+            settingsStore.update { it.copy(activeProfileId = null) }
+        } else {
+            applyProfile(p)
+        }
+    }
+
+    fun deleteProfile(id: String) {
+        garage.delete(id)
+        if (settings.value.activeProfileId == id) settingsStore.update { it.copy(activeProfileId = null) }
+    }
+
+    private fun applyProfile(p: VehicleProfile) {
+        settingsStore.update {
+            it.copy(
+                activeProfileId = p.id,
+                diesel = p.isDiesel,
+                displacementL = p.displacementL,
+                redlineRpm = p.redlineRpm,
+            )
+        }
+    }
+
+    /** Guarda en el perfil el protocolo con el que respondió (y el VIN si no lo tenía). */
+    private fun learnFromConnection(p: VehicleProfile, info: VehicleInfo) {
+        val proto = info.protocolNumber.takeIf { it.isNotBlank() && it != "0" }
+        val updated = p.copy(
+            learnedProtocol = proto ?: p.learnedProtocol,
+            vin = p.vin ?: info.vin,
+        )
+        if (updated != p) {
+            garage.upsert(updated)
+            if (proto != null && proto != p.learnedProtocol) {
+                _toasts.tryEmit("Protocolo aprendido para ${p.title}: ${Elm327.protocolName(proto)}")
+            }
+        }
+    }
+
+    /** Prueba todos los protocolos uno por uno (para vehículos que no están en la base). */
+    fun scanAllProtocols() {
+        val e = elm ?: return
+        if (_protoScan.value.loading) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _protoScan.value = ProtocolScanState(loading = true, step = "Preparando…")
+            try {
+                val results = cycleLock.withLock {
+                    e.scanProtocols { step -> _protoScan.update { it.copy(step = step) } }
+                }
+                _protoScan.value = ProtocolScanState(results = results)
+                val ok = results.firstOrNull { it.ok }
+                _toasts.tryEmit(
+                    if (ok != null) "Tu vehículo responde con ${ok.name}. Toca «Usar» para reconectar con él."
+                    else "Ningún protocolo respondió. Arranca el motor y vuelve a intentarlo.",
+                )
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (ex: Exception) {
+                _protoScan.value = ProtocolScanState(error = ex.message ?: "Error en el escaneo")
+                if (ex is TransportException) onLinkLost(ex.message ?: "Conexión perdida")
+            }
+        }
+    }
+
+    /** Usa un protocolo encontrado: lo guarda en el vehículo activo y reconecta. */
+    fun useProtocol(code: String) {
+        val p = activeProfile.value
+        if (p != null) {
+            garage.upsert(p.copy(protocolOverride = null, learnedProtocol = code))
+        } else {
+            settingsStore.update { it.copy(protocol = code) }
+        }
+        _protoScan.value = ProtocolScanState()
+        val device = (_conn.value as? ConnState.Connected)?.device
+        if (device != null) {
+            closeLink()
+            _conn.value = ConnState.Idle
+            connect(device)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Módulos (solo lectura)
+    // ------------------------------------------------------------------
+
+    fun scanModules() {
+        val e = elm ?: return
+        if (_modules.value.loading) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _modules.value = ModuleScanState(loading = true, step = "Preparando…")
+            try {
+                val list = cycleLock.withLock {
+                    e.scanModules { step -> _modules.update { it.copy(step = step) } }
+                }
+                _modules.value = ModuleScanState(modules = list, readAt = System.currentTimeMillis(),
+                    error = if (list.isEmpty()) "Ningún módulo respondió a la consulta." else null)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (ex: Exception) {
+                _modules.value = ModuleScanState(error = ex.message ?: "Error al leer los módulos")
+                if (ex is TransportException) onLinkLost(ex.message ?: "Conexión perdida")
+            }
+        }
+    }
+
+    /** Lee una vez un PID no decodificado y devuelve sus bytes en hexadecimal. */
+    suspend fun readRawPid(pid: Int): String? {
+        val e = elm ?: return null
+        return withContext(Dispatchers.IO) {
+            try {
+                cycleLock.withLock { e.rawMode01(pid) }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (ex: Exception) {
+                null
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Internet
+    // ------------------------------------------------------------------
+
+    fun updateVehicleDb() {
+        if (_dbUpdating.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _dbUpdating.value = true
+            _dbStatus.value = "Descargando…"
+            _dbStatus.value = try {
+                dbStore.update(settings.value.dbUrl)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (ex: Exception) {
+                "No se pudo actualizar: ${ex.message ?: ex.javaClass.simpleName}. Revisa tu conexión a internet."
+            }
+            _dbUpdating.value = false
+        }
+    }
+
+    /** Decodifica un VIN: primero en línea (NHTSA); si falla, sin internet. */
+    suspend fun lookupVin(vin: String): Result<VinInfo> = withContext(Dispatchers.IO) {
+        if (!VinDecoder.isValid(vin)) return@withContext Result.failure(IllegalArgumentException("El VIN debe tener 17 caracteres (sin I, O ni Q)."))
+        try {
+            Result.success(OnlineService.decodeVin(vin))
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (ex: Exception) {
+            VinDecoder.decodeOffline(vin)?.let { Result.success(it.copy(warning = "Sin internet: solo marca, país y año. " + (it.warning ?: ""))) }
+                ?: Result.failure(ex)
+        }
+    }
+
+    /** VIN leído del vehículo conectado (si lo hay). */
+    fun connectedVin(): String? = connectedInfo?.vin
+
+    fun notify(message: String) {
+        _toasts.tryEmit(message)
+    }
+
+    // ------------------------------------------------------------------
     // Ajustes
     // ------------------------------------------------------------------
 
@@ -531,7 +861,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         val DEMO_DEVICE = ObdDevice("Simulador ELM327", "DEMO", LinkType.DEMO)
 
-        private const val MAX_HISTORY = 1_500
+        private const val MAX_HISTORY = 4_000
         private const val MAX_HISTORY_MS = 10 * 60 * 1000L
         private const val MAX_TERMINAL = 400
         private const val VOLUMETRIC_EFFICIENCY = 0.85
@@ -540,6 +870,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             Metrics.SPEED, Metrics.RPM, Metrics.COOLANT, Metrics.LOAD, Metrics.THROTTLE,
             Metrics.MAF, Metrics.MAP, Metrics.IAT, Metrics.FUEL_LEVEL,
             Metrics.FUEL_RATE, Metrics.ECONOMY, Metrics.VOLTAGE,
+            Metrics.BOOST, Metrics.ACCEL, Metrics.TORQUE, Metrics.POWER,
+            Metrics.RAIL_PRESSURE, Metrics.EGT, Metrics.EGR_CMD, Metrics.OIL_TEMP,
         )
 
         private val FREEZE_KEYS = listOf(

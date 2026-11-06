@@ -87,11 +87,27 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.rememberCoroutineScope
+import com.nguevara.obdpulse.obd.EcuModule
+import com.nguevara.obdpulse.obd.Metric
+import com.nguevara.obdpulse.obd.PidNames
+import com.nguevara.obdpulse.ui.components.InfoRow
+import com.nguevara.obdpulse.vehicle.VehicleProfile
+import kotlinx.coroutines.launch
 
 private enum class ToolSection(val label: String) {
     SENSORS("Sensores"),
+    MODULES("Módulos"),
     TERMINAL("Terminal"),
     TRIPS("Viajes"),
+    VEHICLES("Vehículos"),
     SETTINGS("Ajustes"),
 }
 
@@ -167,8 +183,10 @@ fun ToolsScreen(
 
         when (section) {
             ToolSection.SENSORS -> SensorsSection(vm, connected, settings, values)
+            ToolSection.MODULES -> ModulesSection(vm, connected)
             ToolSection.TERMINAL -> TerminalSection(vm, connected != null)
             ToolSection.TRIPS -> TripsSection(vm)
+            ToolSection.VEHICLES -> VehiclesSection(vm)
             ToolSection.SETTINGS -> SettingsSection(vm, settings)
         }
     }
@@ -196,7 +214,11 @@ private fun SensorsSection(
         return
     }
     val metrics = remember(connected.info) { vm.availableMetrics() }
+    val groups = remember(metrics) { metrics.groupBy { it.category }.toSortedMap(compareBy<Metric.Category> { it.ordinal }) }
+    val undecoded = remember(connected.info) { vm.undecodedPids() }
     val tick by vm.historyTick.collectAsStateWithLifecycle()
+    val rawValues = remember { mutableStateMapOf<Int, String>() }
+    val scope = rememberCoroutineScope()
 
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
@@ -204,52 +226,233 @@ private fun SensorsSection(
     ) {
         item {
             Text(
-                "${metrics.size} magnitudes disponibles · se actualizan en ciclo, las lentas cada 4 ciclos",
+                "${metrics.size} magnitudes disponibles · ${connected.info.supportedPids.count { it % 0x20 != 0 }} PIDs reportados por la ECU",
                 fontSize = 12.sp,
                 color = Palette.TextMuted,
                 modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
             )
         }
-        itemsIndexed(metrics, key = { _, m -> m.key }) { index, m ->
-            val samples = remember(tick, m.key) { vm.history(m.key) }
-            val color = Palette.Series[index % Palette.Series.size]
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Palette.Surface)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(m.name, fontSize = 14.sp, color = Palette.TextPrimary, maxLines = 1)
+        var colorIndex = 0
+        groups.forEach { (category, list) ->
+            item(key = "h-" + category.name) {
+                Text(
+                    category.label.uppercase(),
+                    fontSize = 12.sp,
+                    letterSpacing = 1.4.sp,
+                    color = Palette.TextSecondary,
+                    modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+                )
+            }
+            list.forEach { m ->
+                val color = Palette.Series[colorIndex++ % Palette.Series.size]
+                item(key = m.key) {
+                    val samples = remember(tick, m.key) { vm.history(m.key) }
+                    SensorRow(m, samples, values[m.key], color, settings)
+                }
+            }
+        }
+        if (undecoded.isNotEmpty()) {
+            item(key = "h-raw") {
+                Column(Modifier.padding(start = 4.dp, top = 12.dp)) {
+                    Text("OTROS SENSORES DE TU VEHÍCULO", fontSize = 12.sp, letterSpacing = 1.4.sp, color = Palette.TextSecondary)
                     Text(
-                        if (m.pid != null) String.format(Locale.US, "PID %02X", m.pid) else "Calculado",
-                        fontSize = 11.sp,
+                        "La ECU dice que los tiene, pero la app aún no sabe convertirlos a unidades. Puedes leer sus bytes crudos.",
+                        fontSize = 12.sp,
                         color = Palette.TextMuted,
+                        lineHeight = 16.sp,
                     )
                 }
-                Sparkline(
-                    samples = samples,
-                    color = color,
-                    modifier = Modifier
-                        .width(64.dp)
-                        .height(22.dp),
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(92.dp)) {
-                    Text(
-                        Units.display(m, values[m.key], settings),
-                        style = NumberStyle,
-                        fontSize = 18.sp,
-                        color = Palette.TextPrimary,
-                        maxLines = 1,
-                    )
-                    Text(Units.unit(m, settings), fontSize = 11.sp, color = color, maxLines = 1)
+            }
+            items(undecoded, key = { "raw-$it" }) { pid ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Palette.Surface)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(PidNames.name(pid), fontSize = 14.sp, color = Palette.TextPrimary)
+                        Text(
+                            String.format(Locale.US, "PID %02X", pid) + (rawValues[pid]?.let { " · $it" } ?: ""),
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = if (rawValues[pid] != null) Palette.Cyan else Palette.TextMuted,
+                        )
+                    }
+                    TextButton(onClick = {
+                        scope.launch { rawValues[pid] = vm.readRawPid(pid) ?: "sin respuesta" }
+                    }) { Text("Leer") }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SensorRow(m: Metric, samples: List<com.nguevara.obdpulse.Sample>, value: Double?, color: Color, settings: AppSettings) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Palette.Surface)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(m.name, fontSize = 14.sp, color = Palette.TextPrimary, maxLines = 2, lineHeight = 17.sp)
+            Text(
+                if (m.pid != null) String.format(Locale.US, "PID %02X", m.pid) else "Calculado",
+                fontSize = 11.sp,
+                color = Palette.TextMuted,
+            )
+        }
+        Sparkline(
+            samples = samples,
+            color = color,
+            modifier = Modifier
+                .width(56.dp)
+                .height(22.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(92.dp)) {
+            Text(
+                Units.display(m, value, settings),
+                style = NumberStyle,
+                fontSize = 18.sp,
+                color = Palette.TextPrimary,
+                maxLines = 1,
+            )
+            Text(Units.unit(m, settings), fontSize = 11.sp, color = color, maxLines = 1)
+        }
+    }
+}
+
+// ======================================================================
+// Módulos: verificación SOLO LECTURA
+// ======================================================================
+
+@Composable
+private fun ModulesSection(vm: MainViewModel, connected: ConnState.Connected?) {
+    if (connected == null || !connected.info.ecuOk) {
+        EmptyState(
+            icon = Icons.Rounded.Memory,
+            title = "Módulos del vehículo",
+            message = "Al conectar podrás ver qué computadoras (ECU) responden, su identificación de software y si es reprogramable.",
+            secondaryLabel = "Probar modo demo",
+            onSecondary = { vm.connectDemo() },
+        )
+        return
+    }
+    val state by vm.modules.collectAsStateWithLifecycle()
+
+    LazyColumn(
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            SectionCard(title = "Verificación de módulos") {
+                Text(
+                    "Consulta, sin modificar nada, qué módulos responden por OBD-II y si tienen software con " +
+                        "identificador de calibración (CALID) y número de verificación (CVN).",
+                    fontSize = 13.sp,
+                    color = Palette.TextSecondary,
+                    lineHeight = 18.sp,
+                )
+                Spacer(Modifier.height(10.dp))
+                if (state.loading) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(22.dp), color = Palette.Cyan, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text(state.step, fontSize = 14.sp, color = Palette.TextSecondary)
+                    }
+                } else {
+                    Button(onClick = { vm.scanModules() }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (state.readAt == null) "Verificar módulos" else "Volver a verificar")
+                    }
+                }
+                state.error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Notice(it, Palette.Amber)
+                }
+            }
+        }
+
+        items(state.modules, key = { it.address }) { m -> ModuleCard(m) }
+
+        if (state.modules.isNotEmpty()) {
+            item {
+                SectionCard(title = "¿Se pueden reprogramar los sensores?") {
+                    val points = listOf(
+                        "Los sensores (temperatura, MAF, oxígeno, presión…) son piezas físicas: no tienen software. Si fallan, se limpian o se reemplazan.",
+                        "Lo reprogramable es el software de cada módulo. Su versión es el CALID y el CVN permite comprobar que no fue modificado.",
+                        "Reprogramar, codificar o adaptar requiere el protocolo propio de la marca, acceso de seguridad y una interfaz estable (J2534). " +
+                            "Con un ELM327, un corte a mitad de escritura puede dejar la ECU inservible, por eso esta app solo lee.",
+                        "Lo que sí puedes hacer aquí: borrar códigos en Diagnóstico (la ECU reinicia sus ajustes de combustible) y revisar los monitores.",
+                        "Guarda el CALID y el CVN: si un taller actualiza el software podrás comprobar que cambió.",
+                    )
+                    points.forEach {
+                        Row(Modifier.padding(vertical = 3.dp)) {
+                            Text("•", color = Palette.Cyan, modifier = Modifier.padding(end = 8.dp))
+                            Text(it, fontSize = 13.sp, color = Palette.TextSecondary, lineHeight = 18.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModuleCard(m: EcuModule) {
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Memory, contentDescription = null, tint = Palette.Cyan)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(m.name ?: "Módulo ${m.address}", fontWeight = FontWeight.SemiBold, color = Palette.TextPrimary)
+                Text("Dirección ${m.address}", fontSize = 12.sp, color = Palette.TextMuted)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        if (m.hasCalibration) {
+            Pill("Software reprogramable por el fabricante", Palette.Amber)
+        } else {
+            Pill("Sin identificador de calibración", Palette.TextSecondary)
+        }
+        Spacer(Modifier.height(8.dp))
+        if (m.calibrationIds.isEmpty()) {
+            InfoRow("CALID", "No informado")
+        } else {
+            m.calibrationIds.forEachIndexed { i, c -> InfoRow(if (i == 0) "CALID" else "", c) }
+        }
+        if (m.cvns.isNotEmpty()) m.cvns.forEachIndexed { i, c -> InfoRow(if (i == 0) "CVN" else "", c) }
+        if (m.pidCount > 0) InfoRow("PIDs 01–20", m.pidCount.toString())
+        InfoRow("Resultados de pruebas (modo 06)", if (m.supportsMode06) "Sí" else "No")
+        InfoRow("Pruebas activas (modo 08)", if (m.supportsMode08) "Sí (no se ejecutan)" else "No")
+        m.vin?.let { InfoRow("VIN", it) }
+    }
+}
+
+// ======================================================================
+// Vehículos
+// ======================================================================
+
+@Composable
+private fun VehiclesSection(vm: MainViewModel) {
+    var editing by remember { mutableStateOf<Pair<VehicleProfile, Boolean>?>(null) }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+    ) {
+        GarageContent(vm, onEdit = { p, isNew -> editing = p to isNew })
+    }
+    editing?.let { (p, isNew) -> VehicleEditorDialog(vm, p, isNew) { editing = null } }
 }
 
 // ======================================================================
@@ -506,6 +709,11 @@ private fun formatSize(bytes: Long): String = when {
 @Composable
 private fun SettingsSection(vm: MainViewModel, settings: AppSettings) {
     var showProtocols by remember { mutableStateOf(false) }
+    val profile by vm.activeProfile.collectAsStateWithLifecycle()
+    val db by vm.vehicleDb.collectAsStateWithLifecycle()
+    val dbStatus by vm.dbStatus.collectAsStateWithLifecycle()
+    val dbUpdating by vm.dbUpdating.collectAsStateWithLifecycle()
+    var urlDraft by remember(settings.dbUrl) { mutableStateOf(settings.dbUrl) }
 
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
@@ -541,7 +749,18 @@ private fun SettingsSection(vm: MainViewModel, settings: AppSettings) {
             }
         }
 
-        item {
+        if (profile != null) {
+            item {
+                SectionCard(title = "Mi vehículo") {
+                    Text(
+                        "Combustible, cilindrada y zona roja se toman de ${profile?.title} ${profile?.year}. Cámbialos en Más → Vehículos.",
+                        fontSize = 13.sp,
+                        color = Palette.TextSecondary,
+                        lineHeight = 18.sp,
+                    )
+                }
+            }
+        } else item {
             SectionCard(title = "Mi vehículo") {
                 SwitchRow(
                     title = "Motor diésel",
@@ -580,7 +799,11 @@ private fun SettingsSection(vm: MainViewModel, settings: AppSettings) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Protocolo OBD", fontSize = 14.sp, color = Palette.TextPrimary)
+                        Text(
+                            if (profile == null) "Protocolo OBD" else "Protocolo OBD (sin vehículo elegido)",
+                            fontSize = 14.sp,
+                            color = Palette.TextPrimary,
+                        )
                         Text(
                             PROTOCOLS.firstOrNull { it.first == settings.protocol }?.second ?: "Automático",
                             fontSize = 12.sp,
@@ -608,8 +831,60 @@ private fun SettingsSection(vm: MainViewModel, settings: AppSettings) {
         }
 
         item {
+            SectionCard(title = "Base de vehículos") {
+                InfoRow("Versión", "v${db.version} · ${db.updated}")
+                InfoRow("Origen", vm.dbOrigin)
+                InfoRow("Contenido", "${db.makes.size} marcas · ${db.rules.size} reglas")
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Descarga desde internet la última versión de la base de protocolos (archivo vehicles.json del repositorio de la app).",
+                    fontSize = 12.sp,
+                    color = Palette.TextSecondary,
+                    lineHeight = 16.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = urlDraft,
+                    onValueChange = { urlDraft = it.trim() },
+                    label = { Text("Dirección (URL)") },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Palette.Cyan, unfocusedBorderColor = Palette.Outline),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = {
+                            if (urlDraft != settings.dbUrl) vm.updateSettings { it.copy(dbUrl = urlDraft.ifBlank { com.nguevara.obdpulse.vehicle.OnlineService.DEFAULT_DB_URL }) }
+                            vm.updateVehicleDb()
+                        },
+                        enabled = !dbUpdating,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        if (dbUpdating) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Palette.Background)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text("Buscar actualización")
+                    }
+                    if (urlDraft != com.nguevara.obdpulse.vehicle.OnlineService.DEFAULT_DB_URL) {
+                        OutlinedButton(onClick = {
+                            urlDraft = com.nguevara.obdpulse.vehicle.OnlineService.DEFAULT_DB_URL
+                            vm.updateSettings { it.copy(dbUrl = com.nguevara.obdpulse.vehicle.OnlineService.DEFAULT_DB_URL) }
+                        }) { Text("Restablecer") }
+                    }
+                }
+                dbStatus?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, fontSize = 12.sp, color = Palette.TextSecondary, lineHeight = 16.sp)
+                }
+            }
+        }
+
+        item {
             SectionCard(title = "Acerca de") {
-                Text("OBD Pulse 1.0", fontWeight = FontWeight.SemiBold, color = Palette.TextPrimary)
+                Text("OBD Pulse 1.1", fontWeight = FontWeight.SemiBold, color = Palette.TextPrimary)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Lector OBD-II para adaptadores ELM327 por Bluetooth Clásico o BLE. Los datos de consumo son " +

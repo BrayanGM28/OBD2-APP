@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -50,6 +51,7 @@ import com.nguevara.obdpulse.ui.screens.DiagnosticsScreen
 import com.nguevara.obdpulse.ui.screens.ToolsScreen
 import com.nguevara.obdpulse.ui.theme.Palette
 import java.util.Locale
+import android.widget.Toast
 
 enum class Tab(val label: String, val icon: ImageVector) {
     CONNECT("Conexión", Icons.Rounded.Bluetooth),
@@ -66,6 +68,13 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     val values by vm.values.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.CONNECT) }
     var lastAutoSwitch by rememberSaveable { mutableStateOf<String?>(null) }
+    val profile by vm.activeProfile.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    // Avisos cortos del ViewModel (protocolo aprendido, resultado de escaneos…)
+    LaunchedEffect(Unit) {
+        vm.toasts.collect { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+    }
 
     // Al conectar, ir al tablero (una sola vez por conexión). Si la conexión falla, volver a Conexión.
     val connectedAddress = (conn as? ConnState.Connected)?.device?.address
@@ -89,7 +98,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
     Scaffold(
         containerColor = Palette.Background,
-        topBar = { Header(conn, values[Metrics.VOLTAGE]) },
+        topBar = { Header(conn, values[Metrics.VOLTAGE], profile?.let { "${it.title} ${it.year}" }) },
         bottomBar = {
             NavigationBar(containerColor = Palette.Surface, tonalElevation = 0.dp) {
                 Tab.entries.forEach { t ->
@@ -128,7 +137,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 }
 
 @Composable
-private fun Header(conn: ConnState, voltage: Double?) {
+private fun Header(conn: ConnState, voltage: Double?, vehicle: String?) {
     val (dotColor, status) = when (conn) {
         is ConnState.Idle -> Palette.TextMuted to "Sin conexión"
         is ConnState.Connecting -> Palette.Amber to "Conectando a ${conn.device.name}…"
@@ -151,7 +160,13 @@ private fun Header(conn: ConnState, voltage: Double?) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusDot(dotColor)
                 Spacer(Modifier.width(6.dp))
-                Text(status, fontSize = 12.sp, color = Palette.TextSecondary, maxLines = 1)
+                Text(
+                    if (vehicle != null) "$status · $vehicle" else status,
+                    fontSize = 12.sp,
+                    color = Palette.TextSecondary,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
             }
         }
         if (voltage != null && conn is ConnState.Connected) {

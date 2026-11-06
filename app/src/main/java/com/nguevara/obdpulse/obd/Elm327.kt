@@ -27,7 +27,28 @@ data class VehicleInfo(
     val ecuMessage: String?,
     val supportedPids: Set<Int>,
     val vin: String?,
+    /** Protocolos probados al conectar, en orden: (código ATSP, resultado corto). */
+    val attempts: List<Pair<String, String>> = emptyList(),
 )
+
+/** Resultado de probar un protocolo en el escaneo completo. */
+data class ProtocolProbe(val code: String, val name: String, val ok: Boolean, val detail: String)
+
+/** Un módulo (ECU) que respondió, con su información del modo 09. Solo lectura. */
+data class EcuModule(
+    val address: String,
+    val name: String?,
+    val calibrationIds: List<String>,
+    val cvns: List<String>,
+    val infoTypes: Set<Int>,
+    val vin: String?,
+    val supportsMode06: Boolean,
+    val supportsMode08: Boolean,
+    val pidCount: Int,
+) {
+    /** Tiene software con identificador de calibración: el fabricante puede reprogramarlo con su herramienta. */
+    val hasCalibration: Boolean get() = calibrationIds.isNotEmpty() || cvns.isNotEmpty()
+}
 
 /**
  * Trama de datos ya limpia.
@@ -142,36 +163,46 @@ class Elm327(private val transport: ObdTransport) {
      *  ATSPx  protocolo (0 = automático)
      *  0100   primera consulta: obliga al ELM a encontrar el protocolo del carro
      */
-    suspend fun initialize(protocol: String, onStep: (String) -> Unit): VehicleInfo {
+    suspend fun initialize(protocol: String, onStep: (String) -> Unit): VehicleInfo =
+        initialize(listOf(protocol), slowEcu = false, onStep = onStep)
+
+    /**
+     * Igual que la anterior, pero prueba varios protocolos en orden hasta que la ECU responda.
+     * [candidates] viene del perfil del vehículo (ver ProtocolAdvisor), p. ej. ["4", "5", "3", "0"]
+     * para una Nissan diésel con K-Line. [slowEcu] amplía el tiempo de espera (ATST FF) para ECUs
+     * diésel antiguas que tardan en contestar; con ATAT1 el ELM327 lo reduce solo cuando aprende.
+     */
+    suspend fun initialize(candidates: List<String>, slowEcu: Boolean, onStep: (String) -> Unit): VehicleInfo {
         onStep("Reiniciando el adaptador…")
         send("ATZ", 5_000, logIt = true)
         delay(400)
 
         onStep("Configurando el adaptador…")
         for (cmd in listOf("ATE0", "ATL0", "ATS0", "ATH0", "ATAT1")) send(cmd, 2_000, logIt = true)
+        if (slowEcu) send("ATSTFF", 2_000, logIt = true)
 
         val atiLines = lines(send("ATI", 2_000, logIt = true))
         val version = atiLines.lastOrNull { it.contains("ELM", ignoreCase = true) }
             ?: atiLines.lastOrNull()
             ?: "ELM327"
 
-        send("ATSP$protocol", 2_000, logIt = true)
-
-        onStep("Buscando el protocolo del vehículo…")
-        val first = send("0100", 15_000, logIt = true)
-        val firstUpper = first.uppercase(Locale.US)
-        val ecuOk = dataLines(first, "0100").any { it.hex.startsWith("4100") }
-
-        val ecuMessage = if (ecuOk) {
-            null
-        } else when {
-            "UNABLE" in firstUpper -> "El adaptador no logró comunicarse con la ECU. Pon el encendido en ON o arranca el motor."
-            "CAN ERROR" in firstUpper -> "Error en el bus CAN. Prueba otro protocolo en Ajustes."
-            "BUS INIT" in firstUpper && "ERROR" in firstUpper -> "Falló la inicialización del bus (K-Line). Revisa el encendido."
-            "NO DATA" in firstUpper -> "La ECU no respondió. Pon el encendido en ON o arranca el motor."
-            first.isBlank() -> "El adaptador no respondió a tiempo."
-            else -> "Respuesta inesperada de la ECU: ${first.trim().take(60)}"
+        val list = candidates.map { it.trim().uppercase(Locale.US) }.filter { it.isNotEmpty() }.distinct()
+            .ifEmpty { listOf("0") }
+        val attempts = mutableListOf<Pair<String, String>>()
+        var ecuOk = false
+        var lastRaw = ""
+        for ((i, p) in list.withIndex()) {
+            val label = if (p == "0") "automático" else "${protocolName(p)} (ATSP$p)"
+            onStep(if (list.size == 1) "Buscando el protocolo del vehículo…" else "Probando protocolo $label · ${i + 1}/${list.size}")
+            if (i > 0) send("ATPC", 2_000, logIt = true) // cerrar el intento anterior
+            send("ATSP$p", 2_000, logIt = true)
+            lastRaw = send("0100", firstQueryTimeout(p), logIt = true)
+            ecuOk = dataLines(lastRaw, "0100").any { it.hex.startsWith("4100") }
+            attempts += p to (if (ecuOk) "Responde" else shortFailure(lastRaw))
+            if (ecuOk) break
         }
+
+        val ecuMessage = if (ecuOk) null else failureMessage(lastRaw, list)
 
         val dpn = lines(send("ATDPN", 2_000, logIt = true)).lastOrNull()?.trim().orEmpty()
         protocolNumber = dpn.uppercase(Locale.US).removePrefix("A")
@@ -195,7 +226,61 @@ class Elm327(private val transport: ObdTransport) {
             ecuMessage = ecuMessage,
             supportedPids = supported,
             vin = vin,
+            attempts = attempts,
         )
+    }
+
+    /**
+     * Escaneo completo: prueba TODOS los protocolos del ELM327 uno por uno y reporta cuáles
+     * responden. Sirve para carros que no aparecen en la base de datos.
+     */
+    suspend fun scanProtocols(onStep: (String) -> Unit): List<ProtocolProbe> {
+        val order = listOf("6", "8", "7", "9", "5", "4", "3", "1", "2", "A")
+        val out = mutableListOf<ProtocolProbe>()
+        for ((i, p) in order.withIndex()) {
+            onStep("Probando ${protocolName(p)} · ${i + 1}/${order.size}")
+            send("ATPC", 2_000, logIt = true)
+            send("ATSP$p", 2_000, logIt = true)
+            val raw = send("0100", firstQueryTimeout(p), logIt = true)
+            val ok = dataLines(raw, "0100").any { it.hex.startsWith("4100") }
+            out += ProtocolProbe(p, protocolName(p), ok, if (ok) "Responde" else shortFailure(raw))
+        }
+        send("ATPC", 2_000, logIt = true)
+        return out
+    }
+
+    private fun firstQueryTimeout(p: String): Long = when (p) {
+        "0" -> 20_000          // la búsqueda automática recorre varios protocolos
+        "3", "4", "5" -> 12_000 // K-Line: el inicio lento a 5 baudios tarda ~3 s
+        "1", "2" -> 8_000
+        else -> 6_000           // CAN responde rápido
+    }
+
+    private fun shortFailure(raw: String): String {
+        val u = raw.uppercase(Locale.US)
+        return when {
+            "BUS INIT" in u && "ERROR" in u -> "Error de inicio K-Line"
+            "UNABLE" in u -> "Sin conexión con la ECU"
+            "CAN ERROR" in u -> "Error de bus CAN"
+            "BUS ERROR" in u -> "Error de bus"
+            "NO DATA" in u -> "Sin datos"
+            "STOPPED" in u -> "Interrumpido"
+            raw.isBlank() -> "Sin respuesta"
+            else -> raw.trim().replace("\r", " ").take(30)
+        }
+    }
+
+    private fun failureMessage(raw: String, tried: List<String>): String {
+        val u = raw.uppercase(Locale.US)
+        val base = when {
+            "UNABLE" in u -> "El adaptador no logró comunicarse con la ECU. Pon el encendido en ON o arranca el motor."
+            "CAN ERROR" in u -> "Error en el bus CAN. Prueba otro protocolo o el escaneo completo."
+            "BUS INIT" in u && "ERROR" in u -> "Falló la inicialización del bus K-Line. Arranca el motor e inténtalo de nuevo."
+            "NO DATA" in u -> "La ECU no respondió. Pon el encendido en ON o arranca el motor."
+            raw.isBlank() -> "El adaptador no respondió a tiempo."
+            else -> "Respuesta inesperada de la ECU: ${raw.trim().take(60)}"
+        }
+        return if (tried.size > 1) "$base Se probaron ${tried.size} protocolos." else base
     }
 
     // ------------------------------------------------------------------
@@ -239,11 +324,17 @@ class Elm327(private val transport: ObdTransport) {
     /** Devuelve los bytes de datos (después de "41 PID") de cada ECU que respondió. */
     suspend fun queryMode01(pid: Int, timeoutMs: Long = 2_000): List<IntArray> {
         val cmd = String.format(Locale.US, "01%02X", pid)
-        val prefix = String.format(Locale.US, "41%02X", pid)
         val raw = send(cmd, timeoutMs)
-        return dataLines(raw, cmd)
-            .filter { it.hex.startsWith(prefix) }
-            .map { hexToInts(it.hex.substring(4)) }
+        // Los PIDs largos (p. ej. 70 turbo, 7F tiempos) llegan en varias tramas ISO-TP: se juntan.
+        return assemble(dataLines(raw, cmd))
+            .filter { it.size >= 2 && it[0] == 0x41 && it[1] == pid }
+            .map { it.copyOfRange(2, it.size) }
+    }
+
+    /** Respuesta cruda de cualquier PID del modo 01 (para explorar los no decodificados). */
+    suspend fun rawMode01(pid: Int): String? {
+        val d = queryMode01(pid, 3_000).firstOrNull() ?: return null
+        return d.joinToString(" ") { String.format(Locale.US, "%02X", it) }
     }
 
     /** Lee una métrica del modo 01 y aplica su fórmula. null si no hubo datos válidos. */
@@ -345,7 +436,197 @@ class Elm327(private val transport: ObdTransport) {
         return FreezeFrame(trigger, values)
     }
 
+
+    // ------------------------------------------------------------------
+    // Módulos (ECUs) y calibraciones · SOLO LECTURA
+    // ------------------------------------------------------------------
+
+    /**
+     * Detecta qué módulos responden y lee su identificación con el modo 09:
+     *   0900 tipos de información soportados   0904 ID de calibración (CALID)
+     *   0906 número de verificación (CVN)      090A nombre del módulo
+     * También consulta si soporta el modo 06 (resultados de pruebas) y el modo 08 (pruebas activas).
+     *
+     * Ningún comando de esta función escribe en la ECU. Solo se cambian cabeceras del propio
+     * adaptador (ATH1 / ATSH), que se restauran al terminar.
+     */
+    suspend fun scanModules(onStep: (String) -> Unit): List<EcuModule> {
+        onStep("Buscando módulos que respondan…")
+        val responders: List<String>
+        try {
+            send("ATH1", 2_000, logIt = true)
+            val raw = send("0100", 6_000, logIt = true)
+            responders = responderAddresses(raw)
+        } finally {
+            send("ATH0", 2_000, logIt = true)
+        }
+        if (responders.isEmpty()) return emptyList()
+
+        val out = mutableListOf<EcuModule>()
+        val canTargeted = isCan && responders.all { it.length == 3 || it.length == 8 }
+        if (!canTargeted) {
+            // K-Line / J1850: consulta funcional (responde el módulo de motor, normalmente).
+            onStep("Leyendo identificación del módulo…")
+            out += readModuleInfo(responders.joinToString(" / "))
+            return out
+        }
+
+        try {
+            for ((i, addr) in responders.withIndex()) {
+                onStep("Leyendo módulo $addr · ${i + 1}/${responders.size}")
+                send("ATSH${requestHeaderFor(addr)}", 2_000, logIt = true)
+                out += readModuleInfo(addr)
+            }
+        } finally {
+            // Volver a la cabecera funcional por defecto (todas las ECUs de emisiones).
+            val functional = if (responders.first().length == 8) "18DB33F1" else "7DF"
+            send("ATSH$functional", 2_000, logIt = true)
+        }
+        return out
+    }
+
+    private suspend fun readModuleInfo(address: String): EcuModule {
+        val infoTypes = mode09Supported()
+        val calIds = if (infoTypes.isEmpty() || 0x04 in infoTypes) {
+            mode09Payload(0x04).chunked(16).map { ascii(it) }.filter { it.isNotBlank() }
+        } else {
+            emptyList()
+        }
+        val cvns = if (infoTypes.isEmpty() || 0x06 in infoTypes) {
+            mode09Payload(0x06).chunked(4).filter { it.size == 4 && it.any { b -> b != 0 } }
+                .map { c -> c.joinToString("") { String.format(Locale.US, "%02X", it) } }
+        } else {
+            emptyList()
+        }
+        val name = if (0x0A in infoTypes) ascii(mode09Payload(0x0A)).ifBlank { null } else null
+        val vin = if (0x02 in infoTypes) readVin() else null
+        val m06 = dataLines(send("0600", 3_000), "0600").any { it.hex.startsWith("4600") }
+        val m08 = dataLines(send("0800", 3_000), "0800").any { it.hex.startsWith("4800") }
+        val pidCount = queryMode01(0x00, 3_000).firstOrNull()?.let { d ->
+            if (d.size < 4) 0 else d.take(4).sumOf { Integer.bitCount(it) } - (d[3] and 1)
+        } ?: 0
+        return EcuModule(
+            address = address,
+            name = name?.let { moduleNameFromCode(it) },
+            calibrationIds = calIds,
+            cvns = cvns,
+            infoTypes = infoTypes,
+            vin = vin,
+            supportsMode06 = m06,
+            supportsMode08 = m08,
+            pidCount = pidCount,
+        )
+    }
+
+    /** 0900: mapa de bits de los tipos de información del modo 09. */
+    private suspend fun mode09Supported(): Set<Int> {
+        val raw = send("0900", 4_000)
+        val result = sortedSetOf<Int>()
+        for (msg in assemble(dataLines(raw, "0900"))) {
+            if (msg.size < 6 || msg[0] != 0x49 || msg[1] != 0x00) continue
+            val d = msg.copyOfRange(msg.size - 4, msg.size) // los 4 bytes del mapa al final
+            for (i in 0 until 32) if ((d[i / 8] shr (7 - i % 8)) and 1 == 1) result += i + 1
+        }
+        return result
+    }
+
+    /**
+     * Datos de un tipo de información del modo 09, sin cabeceras.
+     * CAN: un mensaje "49 tt nn datos…" (nn = cantidad de elementos).
+     * K-Line: varias líneas "49 tt ss d1 d2 d3 d4" (ss = número de secuencia).
+     * En ambos casos se descartan los 3 primeros bytes de cada mensaje.
+     */
+    private suspend fun mode09Payload(type: Int): List<Int> {
+        val cmd = String.format(Locale.US, "09%02X", type)
+        val raw = send(cmd, 6_000, logIt = true)
+        val out = mutableListOf<Int>()
+        for (msg in assemble(dataLines(raw, cmd))) {
+            if (msg.size >= 3 && msg[0] == 0x49 && msg[1] == type) out += msg.drop(3)
+        }
+        return out
+    }
+
     companion object {
+        /** Nombres de los protocolos del comando ATSPx. */
+        fun protocolName(code: String): String = when (code.uppercase(Locale.US)) {
+            "0" -> "Automático"
+            "1" -> "SAE J1850 PWM"
+            "2" -> "SAE J1850 VPW"
+            "3" -> "ISO 9141-2"
+            "4" -> "ISO 14230-4 KWP (inicio lento)"
+            "5" -> "ISO 14230-4 KWP (inicio rápido)"
+            "6" -> "CAN 11 bit 500 kbps"
+            "7" -> "CAN 29 bit 500 kbps"
+            "8" -> "CAN 11 bit 250 kbps"
+            "9" -> "CAN 29 bit 250 kbps"
+            "A" -> "SAE J1939 CAN"
+            else -> "Protocolo $code"
+        }
+
+        /**
+         * Direcciones de las ECUs que respondieron a 0100 con cabeceras activadas (ATH1, ATS0):
+         *   CAN 11 bit: "7E8064100BE3EB813"        → "7E8"
+         *   CAN 29 bit: "18DAF110064100BE3EB813"   → "18DAF110"
+         *   K-Line:     "486B104100BE3EB813C4"     → "10" (tercer byte = dirección de origen)
+         */
+        fun responderAddresses(raw: String): List<String> {
+            val out = linkedSetOf<String>()
+            for (original in lines(raw)) {
+                val line = original.replace(" ", "").uppercase(Locale.US)
+                if (!HEX_OR_ODD.matches(line)) continue
+                when {
+                    line.length >= 9 && line.startsWith("18DA") && line.length % 2 == 0 && line.substring(10).startsWith("4100") ->
+                        out += line.substring(0, 8)
+                    line.length >= 7 && line.length % 2 == 1 && line.substring(5).startsWith("4100") ->
+                        out += line.substring(0, 3)
+                    line.length >= 7 && line.length % 2 == 1 && line.substring(3).startsWith("4100") ->
+                        out += line.substring(0, 3) // CAN 11 bit sin byte de longitud (ATCAF0)
+                    line.length >= 10 && line.length % 2 == 0 && line.substring(6).startsWith("4100") ->
+                        out += line.substring(4, 6)
+                }
+            }
+            return out.toList()
+        }
+
+        /** Cabecera física para hablarle a un solo módulo: respuesta 7E8 → petición 7E0. */
+        fun requestHeaderFor(responseAddress: String): String =
+            if (responseAddress.length == 8) {
+                "18DA" + responseAddress.substring(6, 8) + "F1"
+            } else {
+                String.format(Locale.US, "%03X", responseAddress.toInt(16) - 8)
+            }
+
+        /** Junta tramas ISO-TP ("0:", "1:"…) en mensajes completos. */
+        fun assemble(frames: List<Frame>): List<IntArray> {
+            val msgs = mutableListOf<MutableList<Int>>()
+            for (f in frames) {
+                if (f.index == null || f.index == 0 || msgs.isEmpty()) {
+                    msgs += f.bytes.toMutableList()
+                } else {
+                    msgs.last() += f.bytes.toList()
+                }
+            }
+            return msgs.map { it.toIntArray() }
+        }
+
+        /** Bytes → texto, solo caracteres imprimibles; los 0x00 de relleno se vuelven espacios. */
+        fun ascii(bytes: List<Int>): String =
+            bytes.map { if (it in 0x20..0x7E) it.toChar() else ' ' }.joinToString("")
+                .replace(Regex("\\s+"), " ").trim()
+
+        /** "ECM - EngineControl" → "Motor (ECM)". */
+        fun moduleNameFromCode(raw: String): String {
+            val code = raw.substringBefore(" ").substringBefore("-").trim().uppercase(Locale.US)
+            val known = mapOf(
+                "ECM" to "Motor", "PCM" to "Motor y transmisión", "TCM" to "Transmisión",
+                "ABS" to "Frenos ABS", "BCM" to "Carrocería", "SRS" to "Airbags", "HCM" to "Sistema híbrido",
+                "GPC" to "Control de bujías de precalentamiento", "DCU" to "Postratamiento diésel",
+                "FICM" to "Inyectores", "BECM" to "Batería", "CHG" to "Cargador",
+            )
+            return known[code]?.let { "$it ($code)" } ?: raw
+        }
+
+        private val HEX_OR_ODD = Regex("^[0-9A-F]+$")
         private val HEX = Regex("^[0-9A-F]+$")
         private val FRAME_INDEX = Regex("^([0-9A-F]):(.*)$")
 
