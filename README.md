@@ -28,8 +28,13 @@ La app consulta los PIDs soportados por la ECU (0100, 0120, 0140…) y solo mues
   combinaciones rápidas, suavizado y ventanas hasta 10 min.
 - **Internet**: actualización de la base de vehículos desde este repositorio, decodificación del VIN (NHTSA vPIC),
   búsqueda web del protocolo y botón para compartir un protocolo confirmado y sumarlo a la base.
-- **Verificación de módulos (solo lectura)**: qué ECUs responden, su CALID, CVN, nombre y si soportan modos 06/08.
-  La app no reprograma nada: escribir software en una ECU con un ELM327 puede dejarla inservible.
+- **Verificación de módulos (solo lectura)**: identifica ECUs que contestan a OBD-II genérico y consulta en ellas DTC
+  confirmados/pendientes/permanentes, CALID, CVN, nombre y soporte de modos 06/08. No es un inventario de todos los
+  módulos instalados ni lee ABS/EPS, SRS/airbags, TCM o asistentes con el ELM327 Mini. Para el Subaru Impreza GJ
+  2014 FB20 del perfil de ejemplo, esta versión se limita a OBD-II genérico del motor; el diagnóstico Subaru SSM
+  requiere otra interfaz y una integración que aún no está implementada. Un módulo que no aparece no se considera
+  ausente; la app no estima cuántos airbags o sensores tiene el vehículo ni activa pruebas en esos sistemas.
+  La app no reprograma nada.
 - **Registro guiado**: si conectas sin perfil de vehículo, solicita marca, modelo y año para guardar el vehículo.
 - **Sensores explicados y alertas**: toca una lectura en Más → Sensores para ver qué mide, cómo se calcula y cómo interpretar
   sus rangos orientativos. Un aviso de rango no diagnostica por sí mismo una falla ni confirma que falte calibración.

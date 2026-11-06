@@ -99,6 +99,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.rememberCoroutineScope
 import com.nguevara.obdpulse.obd.EcuModule
+import com.nguevara.obdpulse.obd.DtcKind
 import com.nguevara.obdpulse.obd.Metric
 import com.nguevara.obdpulse.obd.Metrics
 import com.nguevara.obdpulse.obd.PidNames
@@ -531,6 +532,7 @@ private fun ModulesSection(vm: MainViewModel, connected: ConnState.Connected?) {
         return
     }
     val state by vm.modules.collectAsStateWithLifecycle()
+    val profile by vm.activeProfile.collectAsStateWithLifecycle()
 
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
@@ -568,6 +570,10 @@ private fun ModulesSection(vm: MainViewModel, connected: ConnState.Connected?) {
 
         items(state.modules, key = { it.address }) { m -> ModuleCard(m) }
 
+        item {
+            AdvancedSystemsCoverage(profile)
+        }
+
         if (state.modules.isNotEmpty()) {
             item {
                 SectionCard(title = "¿Se pueden reprogramar los sensores?") {
@@ -588,6 +594,54 @@ private fun ModulesSection(vm: MainViewModel, connected: ConnState.Connected?) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AdvancedSystemsCoverage(profile: VehicleProfile?) {
+    val targetSubaru = profile?.let {
+        it.make.equals("Subaru", ignoreCase = true) &&
+            it.model.contains("Impreza", ignoreCase = true) &&
+            it.year == 2014 &&
+            it.engine.contains("FB20", ignoreCase = true)
+    } == true
+
+    SectionCard(title = "ABS/EPS, airbags, estabilidad y transmisión") {
+        if (targetSubaru) {
+            Text(
+                "Perfil: Subaru Impreza GJ Sedan 2014 · FB20 · Colombia. Esta versión lee OBD-II genérico " +
+                    "del motor, pero todavía no implementa Subaru SSM para consultar ABS/EPS, SRS/airbags, " +
+                    "TCM ni sus sensores.",
+                fontSize = 13.sp,
+                color = Palette.TextSecondary,
+                lineHeight = 18.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+        Text(
+            "El escaneo ELM327 de esta pantalla solo confirma ECUs que responden a OBD-II genérico. " +
+                "Un resultado vacío no significa que el vehículo no tenga ese módulo; tampoco se puede contar " +
+                "cuántos airbags o sensores están instalados sin la información específica del fabricante.",
+            fontSize = 13.sp,
+            color = Palette.TextSecondary,
+            lineHeight = 18.sp,
+        )
+        Spacer(Modifier.height(8.dp))
+        InfoRow("ABS/EPS y sensores de freno", "No consultados por el ELM327 genérico")
+        InfoRow("Estabilidad y tracción (ESC/TCS)", "No consultados por el ELM327 genérico")
+        InfoRow("Airbags (SRS)", "No consultados; tampoco se puede contar las bolsas")
+        InfoRow("Transmisión (TCM)", "No consultada por el diagnóstico actual")
+        Text(
+            "La falta de datos aquí no indica una falla ni que el vehículo carezca del módulo. Para consultar " +
+                "sensores de rueda/freno, dirección, SRS, TCM o asistente de pendiente hace falta diagnóstico " +
+                "mejorado de la marca/modelo y una interfaz compatible (en Subaru, SSM; el ELM327 Mini queda " +
+                "limitado a OBD-II genérico). Esta app no enviará comandos de activación, borrado ni programación " +
+                "a esos sistemas.",
+            fontSize = 12.sp,
+            color = Palette.TextMuted,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 
@@ -618,6 +672,22 @@ private fun ModuleCard(m: EcuModule) {
         if (m.pidCount > 0) InfoRow("PIDs 01–20", m.pidCount.toString())
         InfoRow("Resultados de pruebas (modo 06)", if (m.supportsMode06) "Sí" else "No")
         InfoRow("Pruebas activas (modo 08)", if (m.supportsMode08) "Sí (no se ejecutan)" else "No")
+        InfoRow("Códigos OBD-II leídos", m.dtcs.size.toString())
+        m.dtcs.take(8).forEach { dtc ->
+            Text(
+                "${dtc.code} · ${when (dtc.kind) {
+                    DtcKind.STORED -> "Confirmado"
+                    DtcKind.PENDING -> "Pendiente"
+                    DtcKind.PERMANENT -> "Permanente"
+                }} — ${dtc.description}",
+                fontSize = 12.sp,
+                color = Palette.TextSecondary,
+                lineHeight = 17.sp,
+            )
+        }
+        if (m.dtcs.size > 8) {
+            Text("y ${m.dtcs.size - 8} más", fontSize = 12.sp, color = Palette.TextMuted)
+        }
         m.vin?.let { InfoRow("VIN", it) }
     }
 }
