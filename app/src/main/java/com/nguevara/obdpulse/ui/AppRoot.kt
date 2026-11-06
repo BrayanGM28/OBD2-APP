@@ -49,6 +49,7 @@ import com.nguevara.obdpulse.ui.screens.ConnectScreen
 import com.nguevara.obdpulse.ui.screens.DashboardScreen
 import com.nguevara.obdpulse.ui.screens.DiagnosticsScreen
 import com.nguevara.obdpulse.ui.screens.ToolsScreen
+import com.nguevara.obdpulse.ui.screens.UnknownVehicleRegistrationDialog
 import com.nguevara.obdpulse.ui.theme.Palette
 import java.util.Locale
 import android.widget.Toast
@@ -132,6 +133,14 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                 Tab.DIAGNOSTICS -> DiagnosticsScreen(vm, conn, goConnect)
                 Tab.TOOLS -> ToolsScreen(vm, conn, settings, values)
             }
+        }
+
+        val connected = conn as? ConnState.Connected
+        val vehicleMismatch = connected?.info?.vin?.let { vin ->
+            profile?.vin?.let { savedVin -> !vin.equals(savedVin, ignoreCase = true) }
+        } == true
+        if (connected != null && (profile == null || vehicleMismatch)) {
+            UnknownVehicleRegistrationDialog(vm, vehicleMismatch)
         }
     }
 }

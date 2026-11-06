@@ -213,6 +213,18 @@ object OnlineService {
         return "https://www.google.com/search?q=" + URLEncoder.encode(q, "UTF-8")
     }
 
+    /** Búsqueda de acceso específico al ángulo del sensor de dirección en ABS/EPS. */
+    fun steeringSearchUrl(p: VehicleProfile): String {
+        val q = listOf(
+            p.make,
+            p.model,
+            p.year.toString(),
+            p.engine,
+            "steering angle sensor live data ABS EPS OBD2",
+        ).filter { it.isNotBlank() }.joinToString(" ")
+        return "https://www.google.com/search?q=" + URLEncoder.encode(q, "UTF-8")
+    }
+
     /** Texto para compartir un resultado confirmado y agregarlo a la base del repositorio. */
     fun contributionText(p: VehicleProfile, protocol: String, protocolName: String): String {
         val rule = linkedMapOf<String, Any?>(

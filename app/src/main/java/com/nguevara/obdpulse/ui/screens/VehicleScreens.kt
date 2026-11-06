@@ -63,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -783,5 +784,55 @@ fun FullScreenDialog(
                 Box(Modifier.weight(1f)) { content() }
             }
         }
+
     }
+}
+
+@Composable
+fun UnknownVehicleRegistrationDialog(vm: MainViewModel, vehicleMismatch: Boolean = false) {
+    var make by rememberSaveable { mutableStateOf("") }
+    var model by rememberSaveable { mutableStateOf("") }
+    var yearText by rememberSaveable { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
+    val year = yearText.toIntOrNull()
+    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Registra tu vehículo") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (vehicleMismatch) {
+                        "El VIN leído no coincide con el perfil activo. Registra marca, modelo y año del vehículo conectado para evitar usar un protocolo incorrecto."
+                    } else {
+                        "No hay un vehículo reconocido o guardado. Indica al menos marca, modelo y año para registrar el perfil y recomendar protocolos."
+                    },
+                    fontSize = 13.sp,
+                    color = Palette.TextSecondary,
+                )
+                OutlinedTextField(value = make, onValueChange = { make = it }, label = { Text("Marca") }, singleLine = true)
+                OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("Modelo") }, singleLine = true)
+                OutlinedTextField(
+                    value = yearText,
+                    onValueChange = { yearText = it.filter(Char::isDigit).take(4) },
+                    label = { Text("Año") },
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = make.isNotBlank() && model.isNotBlank() && year != null && year in 1950..(currentYear + 1),
+                onClick = {
+                    year?.let {
+                        vm.saveProfile(
+                            VehicleProfile(make = make.trim(), model = model.trim(), year = it),
+                            activate = true,
+                        )
+                    }
+                },
+            ) { Text("Guardar vehículo") }
+        },
+        containerColor = Palette.SurfaceHigh,
+    )
 }

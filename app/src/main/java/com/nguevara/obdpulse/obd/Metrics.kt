@@ -26,6 +26,8 @@ data class Metric(
     val kind: Kind = Kind.OTHER,
     val category: Category = Category.ENGINE,
     val formula: ((IntArray) -> Double)? = null,
+    /** Explicación del origen para las magnitudes calculadas. */
+    val calculation: String? = null,
 ) {
     enum class Kind { TEMPERATURE, ECONOMY, OTHER }
 
@@ -36,6 +38,7 @@ data class Metric(
         TEMPERATURE("Temperaturas"),
         EMISSIONS("Emisiones"),
         DRIVING("Conducción"),
+        IMU("IMU del teléfono"),
         ELECTRIC("Eléctrico"),
         COUNTERS("Contadores"),
     }
@@ -52,6 +55,16 @@ object Metrics {
     const val POWER = "POWER"
     const val ACCEL = "ACCEL"
     const val AFR = "AFR"
+    const val PHONE_ACCEL_X = "IMU_ACCEL_X"
+    const val PHONE_ACCEL_Y = "IMU_ACCEL_Y"
+    const val PHONE_ACCEL_Z = "IMU_ACCEL_Z"
+    const val PHONE_ACCEL_MAG = "IMU_ACCEL_MAG"
+    const val PHONE_GYRO_X = "IMU_GYRO_X"
+    const val PHONE_GYRO_Y = "IMU_GYRO_Y"
+    const val PHONE_YAW_RATE = "IMU_YAW_RATE"
+    const val PHONE_YAW = "IMU_YAW"
+    const val PHONE_PITCH = "IMU_PITCH"
+    const val PHONE_ROLL = "IMU_ROLL"
 
     // Claves de PIDs usados con frecuencia
     const val RPM = "010C"
@@ -237,13 +250,31 @@ object Metrics {
 
         // ---------------- Adaptador y calculadas ----------------
         Metric(VOLTAGE, "Voltaje de la batería", "Batería", "V", 10.0, 16.0, decimals = 1, category = C_ELEC),
-        Metric(FUEL_RATE, "Consumo instantáneo", "Consumo", "L/h", 0.0, 30.0, decimals = 2, fast = true, category = C_FUEL),
-        Metric(ECONOMY, "Rendimiento instantáneo", "Rendimiento", "km/L", 0.0, 40.0, decimals = 1, fast = true, kind = Metric.Kind.ECONOMY, category = C_FUEL),
-        Metric(BOOST, "Presión de turbo (calculada)", "Turbo", "bar", -1.0, 2.5, decimals = 2, fast = true, category = C_AIR),
-        Metric(TORQUE, "Torque del motor (calculado)", "Torque", "Nm", 0.0, 800.0, decimals = 0, fast = true),
-        Metric(POWER, "Potencia estimada", "Potencia", "hp", 0.0, 400.0, decimals = 0, fast = true),
-        Metric(ACCEL, "Aceleración longitudinal", "Aceleración", "g", -1.0, 1.0, decimals = 2, fast = true, category = C_DRIVE),
-        Metric(AFR, "Relación aire/combustible", "AFR", ":1", 8.0, 25.0, decimals = 1, fast = true, category = C_FUEL),
+        Metric(FUEL_RATE, "Consumo instantáneo", "Consumo", "L/h", 0.0, 30.0, decimals = 2, fast = true, category = C_FUEL,
+            calculation = "Se lee del PID 015E cuando existe; si no, se estima con MAF y combustible, o con MAP, RPM, temperatura de admisión y cilindrada."),
+        Metric(ECONOMY, "Rendimiento instantáneo", "Rendimiento", "km/L", 0.0, 40.0, decimals = 1, fast = true, kind = Metric.Kind.ECONOMY, category = C_FUEL,
+            calculation = "Velocidad del vehículo (PID 010D) dividida por el consumo instantáneo (L/h)."),
+        Metric(BOOST, "Presión de turbo (calculada)", "Turbo", "bar", -1.0, 2.5, decimals = 2, fast = true, category = C_AIR,
+            calculation = "Presión absoluta del múltiple (MAP) menos presión barométrica (BARO), convertido a bar."),
+        Metric(TORQUE, "Torque del motor (calculado)", "Torque", "Nm", 0.0, 800.0, decimals = 0, fast = true,
+            calculation = "Porcentaje de torque real (PID 0162) multiplicado por torque de referencia (PID 0163)."),
+        Metric(POWER, "Potencia estimada", "Potencia", "hp", 0.0, 400.0, decimals = 0, fast = true,
+            calculation = "Preferentemente torque × RPM convertido a hp; si no hay esos PIDs, estimación aproximada a partir del flujo MAF."),
+        Metric(ACCEL, "Aceleración longitudinal", "Aceleración", "g", -1.0, 1.0, decimals = 2, fast = true, category = C_DRIVE,
+            calculation = "Cambio entre lecturas consecutivas de velocidad (PID 010D), convertido a m/s² y dividido por la gravedad."),
+        Metric(AFR, "Relación aire/combustible", "AFR", ":1", 8.0, 25.0, decimals = 1, fast = true, category = C_FUEL,
+            calculation = "Lambda de la sonda multiplicada por la relación estequiométrica estimada para el combustible configurado."),
+        Metric(PHONE_ACCEL_X, "Aceleración IMU · eje X del teléfono", "IMU X", "m/s²", -39.2, 39.2, decimals = 2, fast = true, category = Metric.Category.IMU),
+        Metric(PHONE_ACCEL_Y, "Aceleración IMU · eje Y del teléfono", "IMU Y", "m/s²", -39.2, 39.2, decimals = 2, fast = true, category = Metric.Category.IMU),
+        Metric(PHONE_ACCEL_Z, "Aceleración IMU · eje Z del teléfono", "IMU Z", "m/s²", -39.2, 39.2, decimals = 2, fast = true, category = Metric.Category.IMU),
+        Metric(PHONE_ACCEL_MAG, "Aceleración resultante IMU", "IMU total", "g", 0.0, 4.0, decimals = 2, fast = true, category = Metric.Category.IMU,
+            calculation = "Magnitud de las aceleraciones X, Y y Z del teléfono dividida por 9,80665 m/s²."),
+        Metric(PHONE_GYRO_X, "Rotación IMU · eje X del teléfono", "Giro X", "°/s", -500.0, 500.0, decimals = 1, fast = true, category = Metric.Category.IMU),
+        Metric(PHONE_GYRO_Y, "Rotación IMU · eje Y del teléfono", "Giro Y", "°/s", -500.0, 500.0, decimals = 1, fast = true, category = Metric.Category.IMU),
+        Metric(PHONE_YAW_RATE, "Velocidad de giro IMU · eje Z", "Giro Z", "°/s", -500.0, 500.0, decimals = 1, fast = true, category = Metric.Category.IMU),
+        Metric(PHONE_YAW, "Orientación IMU · rumbo del teléfono", "Rumbo", "°", -180.0, 180.0, decimals = 1, fast = true, category = Metric.Category.IMU),
+        Metric(PHONE_PITCH, "Orientación IMU · inclinación", "Inclinación", "°", -90.0, 90.0, decimals = 1, fast = true, category = Metric.Category.IMU),
+        Metric(PHONE_ROLL, "Orientación IMU · balanceo", "Balanceo", "°", -180.0, 180.0, decimals = 1, fast = true, category = Metric.Category.IMU),
     )
 
     val byKey: Map<String, Metric> = all.associateBy { it.key }
@@ -255,6 +286,52 @@ object Metrics {
 
     /** Magnitudes calculadas y de qué dependen (para pedir solo lo necesario). */
     val DERIVED_KEYS = setOf(FUEL_RATE, ECONOMY, BOOST, TORQUE, POWER, ACCEL, AFR)
+
+    val PHONE_SENSOR_KEYS = setOf(
+        PHONE_ACCEL_X, PHONE_ACCEL_Y, PHONE_ACCEL_Z, PHONE_ACCEL_MAG,
+        PHONE_GYRO_X, PHONE_GYRO_Y, PHONE_YAW_RATE, PHONE_YAW, PHONE_PITCH, PHONE_ROLL,
+    )
+
+    fun isPhoneSensor(key: String): Boolean = key in PHONE_SENSOR_KEYS
+
+    /** Explicación breve; los rangos son de plausibilidad, no especificaciones del fabricante. */
+    fun explanation(metric: Metric): String {
+        val specific = when (metric.key) {
+            RPM -> "Indica la velocidad de giro del cigüeñal. RPM altas sostenidas aumentan desgaste y temperatura; compárala con el tacómetro."
+            SPEED -> "Velocidad que informa la ECU. Puede diferir del tablero y no sustituye un instrumento homologado."
+            COOLANT -> "Temperatura del refrigerante. Un valor alto sostenido puede indicar sobrecalentamiento; detente de forma segura si aparece una advertencia del vehículo."
+            LOAD -> "Estimación de cuánto trabajo está realizando el motor respecto a su carga calculada."
+            THROTTLE -> "Apertura que informa el cuerpo de aceleración; no siempre coincide exactamente con la posición del pedal."
+            MAF -> "Masa de aire que entra al motor. Se usa para controlar mezcla y estimar consumo/potencia."
+            MAP -> "Presión absoluta en el múltiple de admisión; cambia con carga, acelerador y turbo."
+            BOOST -> "Presión de sobrealimentación calculada; positiva suele indicar presión por encima de la atmosférica."
+            TORQUE -> "Estimación de fuerza de giro del motor, no una medición independiente de dinamómetro."
+            POWER -> "Estimación de potencia del motor; no equivale a potencia certificada en ruedas."
+            ACCEL -> "Aceleración longitudinal estimada a partir de cambios de velocidad OBD; la resolución y frecuencia de lectura la limitan."
+            AFR -> "Relación estimada entre masa de aire y combustible. Interprétala junto con lambda, carga y tipo de combustible."
+            PHONE_ACCEL_X, PHONE_ACCEL_Y, PHONE_ACCEL_Z ->
+                "Aceleración lineal medida por el teléfono en el eje indicado. Los ejes pertenecen al teléfono, no al vehículo; depende de cómo esté montado."
+            PHONE_ACCEL_MAG -> "Magnitud combinada de la aceleración lineal del teléfono. Puede subir al acelerar, frenar, girar o pasar por irregularidades."
+            PHONE_GYRO_X, PHONE_GYRO_Y, PHONE_YAW_RATE ->
+                "Velocidad angular medida por el giroscopio del teléfono. El eje Z solo aproxima el giro del vehículo si el teléfono está montado alineado y calibrado."
+            PHONE_YAW -> "Rumbo del teléfono según su sensor de orientación; no es el ángulo del volante ni necesariamente el rumbo del vehículo."
+            PHONE_PITCH -> "Inclinación longitudinal del teléfono. Cambia si el soporte o el teléfono se mueven."
+            PHONE_ROLL -> "Inclinación lateral del teléfono. No mide directamente el ángulo de dirección."
+            VOLTAGE -> "Voltaje que reporta el adaptador ELM327. Una lectura fuera de lo esperado puede depender de batería, alternador, contacto o precisión del adaptador."
+            else -> null
+        }
+        return specific ?: when (metric.category) {
+            Metric.Category.ENGINE -> "Dato del motor informado por la ECU: ${metric.name.lowercase()}. Su significado y rango correcto dependen del motor, carga y temperatura."
+            Metric.Category.AIR -> "Mide ${metric.name.lowercase()} del sistema de admisión. Interprétalo según RPM, carga, motor y presencia de turbo."
+            Metric.Category.FUEL -> "Mide ${metric.name.lowercase()} del sistema de combustible o mezcla. La ECU y el tipo de combustible determinan el valor esperado."
+            Metric.Category.TEMPERATURE -> "Mide ${metric.name.lowercase()}. Compara el dato con la temperatura ambiente, el tiempo de calentamiento y la especificación del fabricante."
+            Metric.Category.EMISSIONS -> "Dato del sistema de emisiones: ${metric.name.lowercase()}. Puede variar según el ciclo de conducción y la estrategia de la ECU."
+            Metric.Category.DRIVING -> "Dato de conducción: ${metric.name.lowercase()}. Puede actualizarse con menor frecuencia que un sensor dedicado."
+            Metric.Category.IMU -> "Lectura del sensor inercial integrado en el teléfono; no proviene de la ECU."
+            Metric.Category.ELECTRIC -> "Mide ${metric.name.lowercase()} del sistema eléctrico. Un adaptador económico puede introducir error."
+            Metric.Category.COUNTERS -> "Contador informado por la ECU: ${metric.name.lowercase()}; normalmente cambia lentamente."
+        }
+    }
 }
 
 /**

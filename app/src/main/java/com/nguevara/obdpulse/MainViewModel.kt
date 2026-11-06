@@ -1,6 +1,12 @@
 package com.nguevara.obdpulse
 
 import android.app.Application
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nguevara.obdpulse.bt.BleTransport
@@ -77,6 +83,12 @@ data class ModuleScanState(
     val error: String? = null,
 )
 
+data class PhoneImuCalibrationState(
+    val calibrating: Boolean = false,
+    val calibrated: Boolean = false,
+    val message: String? = null,
+)
+
 /** Escaneo de todos los protocolos. */
 data class ProtocolScanState(
     val loading: Boolean = false,
@@ -95,13 +107,27 @@ data class DiagState(
     val message: String? = null,
 )
 
-class MainViewModel(app: Application) : AndroidViewModel(app) {
+class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListener {
 
     private val settingsStore = SettingsStore(app)
     val settings: StateFlow<AppSettings> = settingsStore.state
 
     val scanner = DeviceScanner(app)
     private val tripRecorder = TripRecorder(File(app.filesDir, "trips"))
+    private val sensorManager = app.getSystemService(Application.SENSOR_SERVICE) as SensorManager
+    private val sensorHandler = Handler(Looper.getMainLooper())
+    private val linearAccelerationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+    private val gyroscopeSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+    private val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    private var phoneSensorsRegistered = false
+    private val phoneAccelOffset = FloatArray(3)
+    private val phoneGyroOffset = FloatArray(3)
+    private val calibrationLock = Any()
+    private var calibrationAccelSamples: MutableList<FloatArray>? = null
+    private var calibrationGyroSamples: MutableList<FloatArray>? = null
+    private var imuCalibrationJob: Job? = null
+    private val _imuCalibration = MutableStateFlow(PhoneImuCalibrationState())
+    val imuCalibration: StateFlow<PhoneImuCalibrationState> = _imuCalibration.asStateFlow()
 
     // ---- Garaje y base de vehículos ----
     private val garage = GarageStore(app)
@@ -230,6 +256,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _diag.value = DiagState()
                 _modules.value = ModuleScanState()
                 _conn.value = ConnState.Connected(device, info)
+                startPhoneSensors()
                 if (device.type != LinkType.DEMO) {
                     settingsStore.update { it.copy(lastDevice = device) }
                     if (profile != null && info.ecuOk) learnFromConnection(profile, info)
@@ -271,6 +298,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun closeLink() {
         pollJob?.cancel()
         pollJob = null
+        sensorManager.unregisterListener(this)
+        phoneSensorsRegistered = false
+        imuCalibrationJob?.cancel()
+        imuCalibrationJob = null
         if (tripRecorder.state.active) stopTrip()
         try {
             transport?.close()
@@ -301,6 +332,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = (_conn.value as? ConnState.Connected)?.info
 
     fun isAvailable(key: String): Boolean {
+        if (Metrics.isPhoneSensor(key)) {
+            if (connectedInfo == null) return false
+            return when (key) {
+                Metrics.PHONE_ACCEL_X, Metrics.PHONE_ACCEL_Y, Metrics.PHONE_ACCEL_Z, Metrics.PHONE_ACCEL_MAG ->
+                    linearAccelerationSensor != null
+                Metrics.PHONE_GYRO_X, Metrics.PHONE_GYRO_Y, Metrics.PHONE_YAW_RATE -> gyroscopeSensor != null
+                Metrics.PHONE_YAW, Metrics.PHONE_PITCH, Metrics.PHONE_ROLL -> rotationSensor != null
+                else -> false
+            }
+        }
         val info = connectedInfo ?: return false
         val s = info.supportedPids
         return when (key) {
@@ -337,7 +378,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val out = linkedSetOf<String>()
         out += keys
         val recording = tripRecorder.state.active
-        if (recording) out += TRIP_KEYS
+        if (recording) {
+            out += tripRecorder.recordedKeys
+            out += Metrics.SPEED
+            out += Metrics.FUEL_RATE
+        }
         if (Metrics.BOOST in out) {
             out += when {
                 0x70 in s -> "0170"
@@ -367,7 +412,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         return out.mapNotNull { Metrics[it] }.filter { m ->
-            m.key == Metrics.VOLTAGE || (m.pid != null && m.pid in s)
+            m.key == Metrics.VOLTAGE || Metrics.isPhoneSensor(m.key) || (m.pid != null && m.pid in s)
         }
     }
 
@@ -395,8 +440,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val list = expand(watched.value, info.supportedPids)
             val pidMetrics = list.filter { it.pid != null }
             val wantsVoltage = list.any { it.key == Metrics.VOLTAGE }
+            val wantsPhoneSensors = list.any { Metrics.isPhoneSensor(it.key) }
 
-            if (pidMetrics.isEmpty() && !wantsVoltage) {
+            if (pidMetrics.isEmpty() && !wantsVoltage && !wantsPhoneSensors) {
                 delay(300)
                 continue
             }
@@ -653,10 +699,127 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------------
 
     fun startTrip() {
+        startTrip(TRIP_KEYS.toSet())
+    }
+
+    fun startTrip(keys: Set<String>) {
         if (connectedInfo == null) return
-        val columns = TRIP_KEYS.mapNotNull { Metrics[it] }.filter { isAvailable(it.key) }
+        val columns = keys.mapNotNull { Metrics[it] }.filter { isAvailable(it.key) }
+        if (columns.isEmpty()) {
+            notify("Selecciona al menos una variable para el registro.")
+            return
+        }
         tripRecorder.start(columns)
         _trip.value = tripRecorder.state
+    }
+
+    private fun startPhoneSensors() {
+        if (phoneSensorsRegistered) return
+        val sensors = listOfNotNull(linearAccelerationSensor, gyroscopeSensor, rotationSensor)
+        sensors.forEach {
+            phoneSensorsRegistered = sensorManager.registerListener(
+                this,
+                it,
+                SensorManager.SENSOR_DELAY_GAME,
+                sensorHandler,
+            ) || phoneSensorsRegistered
+        }
+    }
+
+    override fun onSensorChanged(event: SensorEvent) {
+        when (event.sensor.type) {
+            Sensor.TYPE_LINEAR_ACCELERATION -> {
+                synchronized(calibrationLock) {
+                    calibrationAccelSamples?.add(event.values.copyOf())
+                }
+                val a = FloatArray(3) { event.values[it] - phoneAccelOffset[it] }
+                store(Metrics.PHONE_ACCEL_X, a[0].toDouble())
+                store(Metrics.PHONE_ACCEL_Y, a[1].toDouble())
+                store(Metrics.PHONE_ACCEL_Z, a[2].toDouble())
+                val magnitude = vectorMagnitude(a) / 9.80665
+                store(Metrics.PHONE_ACCEL_MAG, magnitude)
+            }
+            Sensor.TYPE_GYROSCOPE -> {
+                synchronized(calibrationLock) {
+                    calibrationGyroSamples?.add(event.values.copyOf())
+                }
+                val scale = 180.0 / Math.PI
+                val g = DoubleArray(3) { (event.values[it] - phoneGyroOffset[it]) * scale }
+                store(Metrics.PHONE_GYRO_X, g[0])
+                store(Metrics.PHONE_GYRO_Y, g[1])
+                store(Metrics.PHONE_YAW_RATE, g[2])
+            }
+            Sensor.TYPE_ROTATION_VECTOR -> {
+                val matrix = FloatArray(9)
+                val orientation = FloatArray(3)
+                SensorManager.getRotationMatrixFromVector(matrix, event.values)
+                SensorManager.getOrientation(matrix, orientation)
+                val degrees = 180.0 / Math.PI
+                store(Metrics.PHONE_YAW, orientation[0] * degrees)
+                store(Metrics.PHONE_PITCH, orientation[1] * degrees)
+                store(Metrics.PHONE_ROLL, orientation[2] * degrees)
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+    /** Calibra solo el sesgo del IMU del teléfono; el teléfono debe permanecer inmóvil. */
+    fun calibratePhoneImu() {
+        if (linearAccelerationSensor == null && gyroscopeSensor == null) {
+            _imuCalibration.value = PhoneImuCalibrationState(message = "Este teléfono no informa acelerómetro lineal ni giroscopio.")
+            return
+        }
+        if (!phoneSensorsRegistered) startPhoneSensors()
+        if (imuCalibrationJob?.isActive == true) return
+        synchronized(calibrationLock) {
+            calibrationAccelSamples = mutableListOf()
+            calibrationGyroSamples = mutableListOf()
+        }
+        _imuCalibration.value = PhoneImuCalibrationState(
+            calibrating = true,
+            message = "Deja el teléfono quieto y montado como se usará durante 3 segundos.",
+        )
+        imuCalibrationJob = viewModelScope.launch {
+            delay(3_000)
+            val (accelSamples, gyroSamples) = synchronized(calibrationLock) {
+                val samples = calibrationAccelSamples.orEmpty().toList() to calibrationGyroSamples.orEmpty().toList()
+                calibrationAccelSamples = null
+                calibrationGyroSamples = null
+                samples
+            }
+            val accelMean = average(accelSamples)
+            val gyroMean = average(gyroSamples)
+            val accelMotion = accelSamples.maxOfOrNull(::vectorMagnitude) ?: 0.0
+            val gyroMotion = gyroSamples.maxOfOrNull(::vectorMagnitude) ?: 0.0
+            if ((linearAccelerationSensor != null && accelSamples.size < 10) ||
+                (gyroscopeSensor != null && gyroSamples.size < 10) ||
+                accelMotion > 1.5 || gyroMotion > 0.25
+            ) {
+                _imuCalibration.value = PhoneImuCalibrationState(
+                    message = "No se pudo calibrar: faltan lecturas o el teléfono se movió. Inmovilízalo y vuelve a intentar.",
+                )
+            } else {
+                accelMean?.copyInto(phoneAccelOffset)
+                gyroMean?.copyInto(phoneGyroOffset)
+                _imuCalibration.value = PhoneImuCalibrationState(
+                    calibrated = true,
+                    message = "Sesgo del IMU del teléfono calibrado. Los ejes aún dependen de la orientación del soporte.",
+                )
+            }
+        }
+    }
+
+    private fun average(samples: List<FloatArray>): FloatArray? {
+        if (samples.isEmpty()) return null
+        return FloatArray(3) { axis -> samples.sumOf { it[axis].toDouble() }.div(samples.size).toFloat() }
+    }
+
+    private fun vectorMagnitude(values: FloatArray): Double {
+        val x = values[0].toDouble()
+        val y = values[1].toDouble()
+        val z = values[2].toDouble()
+        return kotlin.math.sqrt(x * x + y * y + z * z)
     }
 
     fun stopTrip() {

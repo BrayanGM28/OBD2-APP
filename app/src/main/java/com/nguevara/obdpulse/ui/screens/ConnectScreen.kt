@@ -324,6 +324,7 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
     }
 
     if (showGarage) GarageDialog(vm) { showGarage = false }
+
 }
 
 @Composable
