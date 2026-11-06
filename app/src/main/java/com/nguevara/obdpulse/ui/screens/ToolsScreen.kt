@@ -78,6 +78,7 @@ import com.nguevara.obdpulse.data.AppSettings
 import com.nguevara.obdpulse.data.EconUnit
 import com.nguevara.obdpulse.data.Units
 import com.nguevara.obdpulse.obd.TermLine
+import com.nguevara.obdpulse.vehicle.OnlineService
 import com.nguevara.obdpulse.ui.components.EmptyState
 import com.nguevara.obdpulse.ui.components.Pill
 import com.nguevara.obdpulse.ui.components.SectionCard
@@ -466,6 +467,7 @@ private fun SensorDetailsDialog(
 private fun SteeringSensorCard(vm: MainViewModel) {
     val context = LocalContext.current
     val profile by vm.activeProfile.collectAsStateWithLifecycle()
+    val currentProfile = profile
     val phoneSensors = vm.availableMetrics().filter { Metrics.isPhoneSensor(it.key) }
     SectionCard(title = "Ángulo del timón y sensores de dirección") {
         Text(
@@ -477,10 +479,10 @@ private fun SteeringSensorCard(vm: MainViewModel) {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            if (profile == null) {
+            if (currentProfile == null) {
                 "Para buscar el procedimiento específico se necesita como mínimo marca, modelo y año, además del módulo ABS/EPS."
             } else {
-                "Perfil: ${profile.make} ${profile.model} ${profile.year}. Si no aparece, se necesita diagnóstico mejorado del ABS/EPS y confirmar compatibilidad del adaptador."
+                "Perfil: ${currentProfile.make} ${currentProfile.model} ${currentProfile.year}. Si no aparece, se necesita diagnóstico mejorado del ABS/EPS y confirmar compatibilidad del adaptador."
             },
             fontSize = 12.sp,
             color = Palette.TextMuted,
@@ -489,7 +491,7 @@ private fun SteeringSensorCard(vm: MainViewModel) {
         OutlinedButton(
             onClick = {
                 try {
-                    val url = profile?.let { OnlineService.steeringSearchUrl(it) }
+                    val url = currentProfile?.let { OnlineService.steeringSearchUrl(it) }
                         ?: "https://www.google.com/search?q=OBD2+steering+angle+sensor+ABS+EPS+manufacturer+diagnostics"
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 } catch (_: Exception) {
