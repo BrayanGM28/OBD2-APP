@@ -86,6 +86,8 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
 
     val diag by vm.diag.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val activeProfile by vm.activeProfile.collectAsStateWithLifecycle()
+    val vehicleMakeQualifier = activeProfile?.make?.takeIf { it.isNotBlank() }?.let { "de $it" } ?: "del fabricante"
     var confirmClear by remember { mutableStateOf(false) }
     var showFuelGuide by remember { mutableStateOf(false) }
     var showEngineInfo by remember { mutableStateOf(false) }
@@ -346,7 +348,7 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
                     if (0x5C in connected.info.supportedPids) {
                         "Temperatura de aceite: la ECU anuncia el PID estándar 01 5C. Si no aparece un valor, puede no responder a la consulta o no entregar un dato válido en este vehículo."
                     } else {
-                        "Temperatura de aceite: esta ECU no anuncia el PID estándar 01 5C. Aunque el Subaru tenga sensor/indicador de aceite, puede usar datos propietarios que un ELM327 genérico no consulta."
+                        "Temperatura de aceite: esta ECU no anuncia el PID estándar 01 5C. Aunque el vehículo tenga sensor/indicador de aceite, puede usar datos propietarios que un ELM327 genérico no consulta."
                     },
                     fontSize = 12.sp,
                     color = Palette.TextSecondary,
@@ -354,7 +356,7 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Freno: el estado del pedal, presión hidráulica y datos ABS/ESP no tienen una lectura universal OBD-II de motor. Se requiere acceso al módulo y parámetros específicos Subaru; este resultado no permite concluir que el sensor o los frenos estén fallando.",
+                    "Freno: el estado del pedal, presión hidráulica y datos ABS/ESP no tienen una lectura universal OBD-II de motor. Se requiere acceso al módulo y parámetros específicos $vehicleMakeQualifier; este resultado no permite concluir que el sensor o los frenos estén fallando.",
                     fontSize = 12.sp,
                     color = Palette.TextSecondary,
                     lineHeight = 17.sp,
