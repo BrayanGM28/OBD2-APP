@@ -385,10 +385,11 @@ fun VehicleSetupOnConnectDialog(
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val db by vm.vehicleDb.collectAsStateWithLifecycle()
+    val profiles by vm.profiles.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
 
-    var mode by remember { mutableStateOf(if (settings.profiles.isEmpty()) "NEW" else "SELECT") }
+    var mode by remember { mutableStateOf(if (profiles.isEmpty()) "NEW" else "SELECT") }
     var p by remember {
         mutableStateOf(
             VehicleProfile(
@@ -457,13 +458,13 @@ fun VehicleSetupOnConnectDialog(
                         color = Palette.TextSecondary,
                         lineHeight = 18.sp,
                     )
-                    if (settings.profiles.isNotEmpty()) {
+                    if (profiles.isNotEmpty()) {
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 selected = mode == "SELECT",
                                 onClick = { mode = "SELECT" },
-                                label = { Text("Mis vehículos (${settings.profiles.size})") },
+                                label = { Text("Mis vehículos (${profiles.size})") },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = Palette.Cyan.copy(alpha = 0.2f),
                                     selectedLabelColor = Palette.Cyan,
@@ -485,8 +486,8 @@ fun VehicleSetupOnConnectDialog(
                 }
             }
 
-            if (mode == "SELECT" && settings.profiles.isNotEmpty()) {
-                items(settings.profiles, key = { it.id }) { prof ->
+            if (mode == "SELECT" && profiles.isNotEmpty()) {
+                items(profiles, key = { it.id }) { prof ->
                     val r = remember(prof, db) { vm.recommendation(prof) }
                     Surface(
                         shape = RoundedCornerShape(14.dp),
@@ -655,22 +656,21 @@ fun VehicleSetupOnConnectDialog(
                                     color = Palette.Cyan,
                                 )
                                 Text(
-                                    rec.primary.title,
+                                    PROTOCOL_OPTIONS.firstOrNull { it.first.equals(rec.primary, ignoreCase = true) }?.second
+                                        ?: "Protocolo ELM327 ${rec.primary}",
                                     fontSize = 12.sp,
                                     color = Palette.TextPrimary,
                                 )
-                                Text(
-                                    rec.primary.description,
-                                    fontSize = 11.sp,
-                                    color = Palette.TextMuted,
-                                    lineHeight = 15.sp,
-                                )
                             }
-                            Pill(rec.confidence.name, if (rec.confidence == Confidence.EXACT) Palette.Green else Palette.Amber)
+                            Pill(rec.confidence.label, confidenceColor(rec.confidence))
                         }
-                        if (rec.rationale.isNotBlank()) {
+                        if (rec.reason.isNotBlank()) {
                             Spacer(Modifier.height(6.dp))
-                            Text(rec.rationale, fontSize = 12.sp, color = Palette.TextSecondary)
+                            Text(rec.reason, fontSize = 12.sp, color = Palette.TextSecondary)
+                        }
+                        rec.note?.let { note ->
+                            Spacer(Modifier.height(4.dp))
+                            Text(note, fontSize = 11.sp, color = Palette.TextMuted)
                         }
                     }
                 }
