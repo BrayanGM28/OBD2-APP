@@ -73,7 +73,6 @@ sealed interface ConnState {
     data class Connected(val device: ObdDevice, val info: VehicleInfo) : ConnState
     data class Failed(val message: String, val device: ObdDevice?) : ConnState
 }
-if (key in IMU_KEYS) _historyTick.update { it + 1 }
 
 data class Sample(val t: Long, val v: Double)
 
@@ -758,6 +757,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             q.addLast(Sample(now, v))
             while (q.size > MAX_HISTORY || (q.isNotEmpty() && now - q.first().t > MAX_HISTORY_MS)) q.removeFirst()
         }
+        if (key in IMU_KEYS) _historyTick.update { it + 1 }
     }
 
     fun history(key: String): List<Sample> = synchronized(history) { history[key]?.toList() ?: emptyList() }

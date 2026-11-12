@@ -92,6 +92,7 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
     val devices by vm.scanner.devices.collectAsStateWithLifecycle()
     val scanning by vm.scanner.scanning.collectAsStateWithLifecycle()
     val profile by vm.activeProfile.collectAsStateWithLifecycle()
+    val profiles by vm.profiles.collectAsStateWithLifecycle()
     val protoScan by vm.protoScan.collectAsStateWithLifecycle()
     var showGarage by remember { mutableStateOf(false) }
     var targetDeviceForSetup by remember { mutableStateOf<ObdDevice?>(null) }
@@ -365,7 +366,7 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
         VehicleEditorDialog(
             vm = vm,
             initial = prof,
-            isNew = prof.id.isBlank() || settings.profiles.none { it.id == prof.id },
+            isNew = prof.id.isBlank() || profiles.none { it.id == prof.id },
             onDismiss = { vehicleToEdit = null },
         )
     }

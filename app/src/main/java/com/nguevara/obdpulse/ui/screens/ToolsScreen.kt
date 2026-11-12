@@ -2,6 +2,7 @@ package com.nguevara.obdpulse.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -47,6 +48,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -263,57 +265,57 @@ private fun SensorsSection(
                         Text("Ver guía", color = Palette.Cyan)
                     }
                 }
-                item(key = "phone-imu") {
-                    SectionCard(title = "IMU del teléfono") {
-                        Text(
-                            "Aceleración, giro y orientación se leen de los sensores del celular. El resultado depende de cómo esté fijado; no sustituye al sensor yaw del ABS/ESP ni mide el ángulo real del timón.",
-                            fontSize = 13.sp,
-                            color = Palette.TextSecondary,
-                            lineHeight = 18.sp,
-                        )
-                        if (vm.phoneImuAvailable()) {
-                            Spacer(Modifier.height(8.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Button(onClick = vm::calibratePhoneImu) {
-                                    Text(if (imuCalibrated) "Recalibrar IMU quieto" else "Calibrar IMU quieto")
-                                }
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    if (imuCalibrated) "Offset aplicado" else "Coloca el teléfono inmóvil",
-                                    color = Palette.TextMuted,
-                                    fontSize = 11.sp,
-                                )
-                            }
-                        } else {
-                            Text("Este teléfono no reporta sensores IMU compatibles.", fontSize = 12.sp, color = Palette.TextMuted)
+            }
+        }
+        item(key = "phone-imu") {
+            SectionCard(title = "IMU del teléfono") {
+                Text(
+                    "Aceleración, giro y orientación se leen de los sensores del celular. El resultado depende de cómo esté fijado; no sustituye al sensor yaw del ABS/ESP ni mide el ángulo real del timón.",
+                    fontSize = 13.sp,
+                    color = Palette.TextSecondary,
+                    lineHeight = 18.sp,
+                )
+                if (vm.phoneImuAvailable()) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = vm::calibratePhoneImu) {
+                            Text(if (imuCalibrated) "Recalibrar IMU quieto" else "Calibrar IMU quieto")
                         }
-                    }
-                }
-                item(key = "steering-limitations") {
-                    SectionCard(title = "Ángulo del timón y sensores ABS/EPS") {
+                        Spacer(Modifier.width(10.dp))
                         Text(
-                            "El ángulo del timón y el yaw del control de estabilidad no son PIDs OBD-II genéricos. Normalmente se requieren datos específicos del fabricante y acceso compatible al módulo ABS/EPS; el ELM327 puede no ser suficiente.",
-                            fontSize = 13.sp,
-                            color = Palette.TextSecondary,
-                            lineHeight = 18.sp,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = {
-                                val query = OnlineService.steeringSearchUrl(profile)
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(query)))
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Buscar información para este vehículo")
-                        }
-                        Text(
-                            "Si el módulo requiere CAN propietario, herramienta de diagnóstico avanzada o calibración de fábrica, se necesitará el protocolo y equipo compatibles.",
-                            fontSize = 11.sp,
+                            if (imuCalibrated) "Offset aplicado" else "Coloca el teléfono inmóvil",
                             color = Palette.TextMuted,
+                            fontSize = 11.sp,
                         )
                     }
+                } else {
+                    Text("Este teléfono no reporta sensores IMU compatibles.", fontSize = 12.sp, color = Palette.TextMuted)
                 }
+            }
+        }
+        item(key = "steering-limitations") {
+            SectionCard(title = "Ángulo del timón y sensores ABS/EPS") {
+                Text(
+                    "El ángulo del timón y el yaw del control de estabilidad no son PIDs OBD-II genéricos. Normalmente se requieren datos específicos del fabricante y acceso compatible al módulo ABS/EPS; el ELM327 puede no ser suficiente.",
+                    fontSize = 13.sp,
+                    color = Palette.TextSecondary,
+                    lineHeight = 18.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        val query = OnlineService.steeringSearchUrl(profile)
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(query)))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Buscar información para este vehículo")
+                }
+                Text(
+                    "Si el módulo requiere CAN propietario, herramienta de diagnóstico avanzada o calibración de fábrica, se necesitará el protocolo y equipo compatibles.",
+                    fontSize = 11.sp,
+                    color = Palette.TextMuted,
+                )
             }
         }
         item {
