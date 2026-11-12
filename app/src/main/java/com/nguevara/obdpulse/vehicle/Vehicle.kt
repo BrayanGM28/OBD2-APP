@@ -64,9 +64,12 @@ data class VehicleProfile(
     val transmission: Transmission = Transmission.MANUAL,
     val market: Market = Market.LATAM,
     val redlineRpm: Int = 6000,
+    /** Potencia máxima declarada en caballos de fuerza (HP) para estimación precisa de par/potencia. */
+    val hp: Int? = null,
+    /** Peso en orden de marcha estimado en kg (para estimación inercial de potencia). */
+    val weightKg: Int? = null,
     /** Protocolo elegido a mano (null = usar la recomendación). */
     val protocolOverride: String? = null,
-    /** Protocolo con el que este carro respondió la última vez (lo aprende la app). */
     val learnedProtocol: String? = null,
     val vin: String? = null,
     val nickname: String = "",
@@ -75,13 +78,15 @@ data class VehicleProfile(
         get() = nickname.ifBlank { listOf(make, model, version).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "Vehículo sin nombre" } }
 
     val subtitle: String
-        get() = listOf(
+        get() = listOfNotNull(
             year.toString(),
             engine.takeIf { it.isNotBlank() },
             String.format(Locale.US, "%.1f L", displacementL),
+            hp?.let { "$it hp" },
             fuel.label,
+            transmission.label,
             drive.label,
-        ).filterNotNull().joinToString(" · ")
+        ).joinToString(" · ")
 
     val isDiesel: Boolean get() = fuel == Fuel.DIESEL
 
@@ -89,6 +94,7 @@ data class VehicleProfile(
         "id" to id, "make" to make, "model" to model, "version" to version, "year" to year,
         "engine" to engine, "fuel" to fuel.code, "displacement" to displacementL, "drive" to drive.code,
         "transmission" to transmission.code, "market" to market.code, "redline" to redlineRpm,
+        "hp" to hp, "weightKg" to weightKg,
         "protocolOverride" to protocolOverride, "learnedProtocol" to learnedProtocol, "vin" to vin,
         "nickname" to nickname,
     )
@@ -107,6 +113,8 @@ data class VehicleProfile(
             transmission = Transmission.from(m.str("transmission")),
             market = Market.from(m.str("market")),
             redlineRpm = m.int("redline") ?: 6000,
+            hp = m.int("hp"),
+            weightKg = m.int("weightKg"),
             protocolOverride = m.str("protocolOverride"),
             learnedProtocol = m.str("learnedProtocol"),
             vin = m.str("vin"),
@@ -161,13 +169,21 @@ data class ProtocolRule(
     val slowEcu: Boolean,
     val note: String?,
 ) {
-    private fun alts(s: String?): List<String> = s?.split('|')?.map { it.trim().lowercase(Locale.US) }?.filter { it.isNotEmpty() } ?: emptyList()
+    private fun norm(s: String): String = s.trim().lowercase(Locale.US)
+        .replace("ë", "e")
+        .replace("é", "e")
+        .replace("mercedez", "mercedes")
+        .replace("bwm", "bmw")
+        .replace("-benz", "")
+
+    private fun alts(s: String?): List<String> = s?.split('|')?.map { norm(it) }?.filter { it.isNotEmpty() } ?: emptyList()
 
     /** Puntaje de coincidencia, o null si no aplica. Más alto = regla más específica. */
     fun score(p: VehicleProfile): Int? {
         var score = 0
         if (make != null) {
-            if (alts(make).none { it == p.make.trim().lowercase(Locale.US) }) return null
+            val targetMake = norm(p.make)
+            if (alts(make).none { it == targetMake || (it.length >= 3 && targetMake.contains(it)) || (targetMake.length >= 3 && it.contains(targetMake)) }) return null
             score += 10
         }
         if (model != null) {
@@ -221,13 +237,29 @@ data class VehicleDb(
     val rules: List<ProtocolRule>,
     val templates: List<VehicleProfile>,
 ) {
-    fun makeNames(): List<String> = makes.map { it.make }.sorted()
+    fun makeNames(): List<String> =
+        (makes.map { it.make } + if (hasMake("Hyundai")) listOf("Hunday") else emptyList()).sorted()
 
     fun modelsFor(make: String): List<String> =
-        makes.firstOrNull { it.make.equals(make.trim(), ignoreCase = true) }?.models.orEmpty()
+        makeEntry(make)?.models.orEmpty()
 
     fun enginesFor(make: String): List<String> =
-        makes.firstOrNull { it.make.equals(make.trim(), ignoreCase = true) }?.engines.orEmpty()
+        makeEntry(make)?.engines.orEmpty()
+
+    fun canonicalMake(make: String): String {
+        val alias = when (make.trim().lowercase(Locale.US)) {
+            "hunday" -> "Hyundai"
+            "mercedes" -> "Mercedes-Benz"
+            "vw" -> "Volkswagen"
+            else -> make.trim()
+        }
+        return makes.firstOrNull { it.make.equals(alias, ignoreCase = true) }?.make ?: alias
+    }
+
+    private fun makeEntry(make: String): MakeEntry? =
+        makes.firstOrNull { it.make.equals(canonicalMake(make), ignoreCase = true) }
+
+    private fun hasMake(make: String): Boolean = makes.any { it.make.equals(make, ignoreCase = true) }
 
     companion object {
         val EMPTY = VehicleDb(0, "", emptyList(), emptyList(), emptyList())

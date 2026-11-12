@@ -63,7 +63,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,12 +72,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nguevara.obdpulse.MainViewModel
+import com.nguevara.obdpulse.bt.ObdDevice
 import com.nguevara.obdpulse.obd.Elm327
 import com.nguevara.obdpulse.ui.components.Pill
 import com.nguevara.obdpulse.ui.components.SectionCard
@@ -93,6 +94,7 @@ import com.nguevara.obdpulse.vehicle.ProtocolRecommendation
 import com.nguevara.obdpulse.vehicle.Transmission
 import com.nguevara.obdpulse.vehicle.VehicleProfile
 import com.nguevara.obdpulse.vehicle.VinInfo
+import com.nguevara.obdpulse.vehicle.VinDecoder
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Locale
@@ -141,34 +143,62 @@ private fun confidenceColor(c: Confidence): Color = when (c) {
 // ======================================================================
 
 @Composable
-fun ActiveVehicleCard(vm: MainViewModel, profile: VehicleProfile?, onOpenGarage: () -> Unit) {
+fun ActiveVehicleCard(
+    vm: MainViewModel,
+    profile: VehicleProfile?,
+    onOpenGarage: () -> Unit,
+    onEdit: ((VehicleProfile) -> Unit)? = null,
+    onConfigureNew: (() -> Unit)? = null,
+) {
     val db by vm.vehicleDb.collectAsStateWithLifecycle()
     SectionCard(
         title = "Mi vehículo",
         trailing = {
-            TextButton(onClick = onOpenGarage) { Text(if (profile == null) "Elegir" else "Cambiar") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (profile != null && onEdit != null) {
+                    TextButton(onClick = { onEdit(profile) }) { Text("Editar") }
+                }
+                TextButton(onClick = onOpenGarage) { Text(if (profile == null) "Elegir" else "Cambiar") }
+            }
         },
     ) {
         if (profile == null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CarBadge(Palette.TextSecondary)
                 Spacer(Modifier.width(12.dp))
-                Text(
-                    "Elige marca, modelo, año y motor para que la app pruebe primero el protocolo correcto de tu carro.",
-                    fontSize = 13.sp,
-                    color = Palette.TextSecondary,
-                    lineHeight = 18.sp,
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Configura marca, modelo, año y motor para que la app pruebe primero el protocolo correcto y estime potencia y torque.",
+                        fontSize = 13.sp,
+                        color = Palette.TextSecondary,
+                        lineHeight = 18.sp,
+                    )
+                    if (onConfigureNew != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = onConfigureNew) {
+                            Text("Configurar vehículo")
+                        }
+                    }
+                }
             }
             return@SectionCard
         }
         val rec = remember(profile, db) { vm.recommendation(profile) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { onEdit?.invoke(profile) },
+        ) {
             CarBadge(Palette.Cyan)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("${profile.title} ${profile.year}", fontWeight = FontWeight.SemiBold, color = Palette.TextPrimary, maxLines = 1)
                 Text(profile.subtitle, fontSize = 12.sp, color = Palette.TextMuted, maxLines = 2)
+            }
+            if (onEdit != null) {
+                Icon(Icons.Rounded.Edit, contentDescription = "Editar", tint = Palette.TextSecondary, modifier = Modifier.size(18.dp))
             }
         }
         Spacer(Modifier.height(10.dp))
@@ -339,6 +369,334 @@ fun GarageContent(vm: MainViewModel, onEdit: (VehicleProfile, Boolean) -> Unit, 
 }
 
 // ======================================================================
+// Diálogo de configuración al conectar
+// ======================================================================
+
+/**
+ * Permite seleccionar o configurar un vehículo al conectarse por primera vez
+ * o cambiarlo, calculando el protocolo OBD-II correcto y los parámetros de potencia.
+ */
+@Composable
+fun VehicleSetupOnConnectDialog(
+    vm: MainViewModel,
+    device: ObdDevice,
+    onConnect: (VehicleProfile?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val db by vm.vehicleDb.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
+
+    var mode by remember { mutableStateOf(if (settings.profiles.isEmpty()) "NEW" else "SELECT") }
+    var p by remember {
+        mutableStateOf(
+            VehicleProfile(
+                year = currentYear - 4,
+                hp = 120,
+                weightKg = 1300,
+            ),
+        )
+    }
+    var vinText by remember { mutableStateOf("") }
+    var vinBusy by remember { mutableStateOf(false) }
+    var vinResult by remember { mutableStateOf<String?>(null) }
+    val rec = remember(p, db) { vm.recommendation(p) }
+
+    fun decodeVin() {
+        scope.launch {
+            vinBusy = true
+            vinResult = null
+            val r = vm.lookupVin(vinText)
+            vinBusy = false
+            r.onSuccess { info ->
+                p = merge(p, info)
+                vinResult = buildString {
+                    append("Datos obtenidos de: ${info.source}.")
+                    listOfNotNull(info.make, info.model, info.year?.toString(), info.country).takeIf { it.isNotEmpty() }?.let {
+                        append(" ").append(it.joinToString(" · "))
+                    }
+                    info.warning?.let { append("\n").append(it) }
+                }
+            }.onFailure { vinResult = it.message ?: "No se pudo decodificar el VIN." }
+        }
+    }
+
+    fun saveAndConnect() {
+        if (p.make.isBlank()) {
+            vm.notify("Escribe al menos la marca del vehículo.")
+            return
+        }
+        val saved = p.copy(
+            make = p.make.trim(),
+            model = p.model.trim(),
+            version = p.version.trim(),
+            engine = p.engine.trim(),
+            vin = vinText.trim().uppercase(Locale.US).ifBlank { null },
+        )
+        vm.saveProfile(saved, activate = true)
+        onConnect(saved)
+    }
+
+    FullScreenDialog(
+        title = "Conectar a ${device.name}",
+        onDismiss = onDismiss,
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                SectionCard(title = "Vehículo para esta conexión") {
+                    Text(
+                        "Selecciona o configura tu vehículo para que OBD Pulse busque automáticamente el protocolo OBD-II correcto y configure los cálculos de potencia y torque.",
+                        fontSize = 13.sp,
+                        color = Palette.TextSecondary,
+                        lineHeight = 18.sp,
+                    )
+                    if (settings.profiles.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = mode == "SELECT",
+                                onClick = { mode = "SELECT" },
+                                label = { Text("Mis vehículos (${settings.profiles.size})") },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Palette.Cyan.copy(alpha = 0.2f),
+                                    selectedLabelColor = Palette.Cyan,
+                                    labelColor = Palette.TextSecondary,
+                                ),
+                            )
+                            FilterChip(
+                                selected = mode == "NEW",
+                                onClick = { mode = "NEW" },
+                                label = { Text("Configurar otro vehículo") },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Palette.Cyan.copy(alpha = 0.2f),
+                                    selectedLabelColor = Palette.Cyan,
+                                    labelColor = Palette.TextSecondary,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (mode == "SELECT" && settings.profiles.isNotEmpty()) {
+                items(settings.profiles, key = { it.id }) { prof ->
+                    val r = remember(prof, db) { vm.recommendation(prof) }
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Palette.Surface,
+                        border = BorderStroke(1.dp, Palette.Outline),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable {
+                                vm.selectProfile(prof.id)
+                                onConnect(prof)
+                            },
+                    ) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.DirectionsCar, contentDescription = null, tint = Palette.Cyan)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("${prof.title} ${prof.year}", fontWeight = FontWeight.SemiBold, color = Palette.TextPrimary)
+                                Text(prof.subtitle, fontSize = 12.sp, color = Palette.TextMuted)
+                                Spacer(Modifier.height(4.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Pill(shortProtocol(r.primary), Palette.Cyan)
+                                    prof.hp?.let { Pill("$it HP", Palette.Green) }
+                                }
+                            }
+                            Button(onClick = {
+                                vm.selectProfile(prof.id)
+                                onConnect(prof)
+                            }) {
+                                Text("Conectar")
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    OutlinedButton(
+                        onClick = { onConnect(null) },
+                        modifier = Modifier.fillMaxWidth().height(46.dp),
+                    ) {
+                        Text("Conectar sin vehículo (Modo genérico)")
+                    }
+                }
+            } else {
+                // ---- VIN ----
+                item {
+                    SectionCard(title = "1. Decodificar VIN por internet (opcional)") {
+                        Text(
+                            "Ingresa los 17 dígitos del VIN para extraer automáticamente marca, modelo, año, cilindrada, HP y transmisión desde la base pública de NHTSA.",
+                            fontSize = 12.sp,
+                            color = Palette.TextSecondary,
+                            lineHeight = 16.sp,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = vinText,
+                            onValueChange = { vinText = it.uppercase(Locale.US).filter { c -> c.isLetterOrDigit() }.take(17) },
+                            label = { Text("VIN (17 caracteres)") },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 15.sp),
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false),
+                            supportingText = { Text("${vinText.length}/17") },
+                            colors = fieldColors(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Button(onClick = { decodeVin() }, enabled = vinText.length == 17 && !vinBusy) {
+                                if (vinBusy) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Palette.Background)
+                                } else {
+                                    Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(6.dp))
+                                Text("Buscar en internet")
+                            }
+                        }
+                        vinResult?.let {
+                            Spacer(Modifier.height(6.dp))
+                            Text(it, fontSize = 12.sp, color = Palette.Cyan, lineHeight = 16.sp)
+                        }
+                    }
+                }
+
+                // ---- Selección manual de la base de datos ----
+                item {
+                    SectionCard(title = "2. Marca, modelo y año") {
+                        SuggestField("Marca", p.make, db.makeNames()) { p = p.copy(make = it) }
+                        SuggestField("Modelo", p.model, db.modelsFor(p.make)) { p = p.copy(model = it) }
+                        SuggestField("Versión / línea (ej. 2.0i, 16V)", p.version, emptyList()) { p = p.copy(version = it) }
+                        SuggestField("Motor / Código (ej. FB20, K4M, 2.0)", p.engine, db.enginesFor(p.make)) { p = p.copy(engine = it) }
+
+                        Spacer(Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Año modelo", fontSize = 14.sp, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { p = p.copy(year = (p.year - 1).coerceAtLeast(1980)) }) {
+                                Icon(Icons.Rounded.Remove, contentDescription = "Restar", tint = Palette.Cyan)
+                            }
+                            Text(p.year.toString(), style = NumberStyle, fontSize = 20.sp, color = Palette.TextPrimary)
+                            IconButton(onClick = { p = p.copy(year = (p.year + 1).coerceAtMost(currentYear + 1)) }) {
+                                Icon(Icons.Rounded.Add, contentDescription = "Sumar", tint = Palette.Cyan)
+                            }
+                        }
+                        Slider(
+                            value = p.year.toFloat(),
+                            onValueChange = { p = p.copy(year = it.roundToInt()) },
+                            valueRange = 1980f..(currentYear + 1).toFloat(),
+                            colors = sliderColors(),
+                        )
+                    }
+                }
+
+                // ---- Transmisión y especificaciones ----
+                item {
+                    SectionCard(title = "3. Transmisión, cilindrada y potencia") {
+                        FieldLabel("Transmisión")
+                        ChoiceChips(Transmission.entries, p.transmission, { it.label }) { p = p.copy(transmission = it) }
+
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FieldLabel("Cilindrada", Modifier.weight(1f))
+                            Text(String.format(Locale.getDefault(), "%.1f L", p.displacementL), style = NumberStyle, color = Palette.Cyan)
+                        }
+                        Slider(
+                            value = p.displacementL.toFloat(),
+                            onValueChange = { p = p.copy(displacementL = (it * 10).roundToInt() / 10.0) },
+                            valueRange = 0.6f..7.0f,
+                            steps = 63,
+                            colors = sliderColors(),
+                        )
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FieldLabel("Potencia de fábrica (HP)", Modifier.weight(1f))
+                            Text(p.hp?.let { "$it HP" } ?: "120 HP (defecto)", style = NumberStyle, color = Palette.Cyan)
+                        }
+                        Slider(
+                            value = (p.hp ?: 120).toFloat(),
+                            onValueChange = { p = p.copy(hp = it.roundToInt()) },
+                            valueRange = 50f..650f,
+                            steps = 119,
+                            colors = sliderColors(),
+                        )
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FieldLabel("Peso del vehículo (kg)", Modifier.weight(1f))
+                            Text(p.weightKg?.let { "$it kg" } ?: "1300 kg (defecto)", style = NumberStyle, color = Palette.Cyan)
+                        }
+                        Slider(
+                            value = (p.weightKg ?: 1300).toFloat(),
+                            onValueChange = { p = p.copy(weightKg = (it / 10).roundToInt() * 10) },
+                            valueRange = 600f..3500f,
+                            steps = 289,
+                            colors = sliderColors(),
+                        )
+                    }
+                }
+
+                // ---- Protocolo recomendado ----
+                item {
+                    SectionCard(title = "Protocolo OBD-II que se buscará") {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    shortProtocol(rec.primary),
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Palette.Cyan,
+                                )
+                                Text(
+                                    rec.primary.title,
+                                    fontSize = 12.sp,
+                                    color = Palette.TextPrimary,
+                                )
+                                Text(
+                                    rec.primary.description,
+                                    fontSize = 11.sp,
+                                    color = Palette.TextMuted,
+                                    lineHeight = 15.sp,
+                                )
+                            }
+                            Pill(rec.confidence.name, if (rec.confidence == Confidence.EXACT) Palette.Green else Palette.Amber)
+                        }
+                        if (rec.rationale.isNotBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(rec.rationale, fontSize = 12.sp, color = Palette.TextSecondary)
+                        }
+                    }
+                }
+
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { saveAndConnect() },
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                        ) {
+                            Text("Guardar vehículo y conectar", fontWeight = FontWeight.SemiBold)
+                        }
+                        OutlinedButton(
+                            onClick = { onConnect(null) },
+                            modifier = Modifier.fillMaxWidth().height(46.dp),
+                        ) {
+                            Text("Conectar sin configurar vehículo (Modo genérico)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ======================================================================
 // Editor de vehículo
 // ======================================================================
 
@@ -505,6 +863,34 @@ fun VehicleEditorDialog(vm: MainViewModel, initial: VehicleProfile, isNew: Boole
                         steps = 23,
                         colors = sliderColors(),
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FieldLabel("Potencia de fábrica (HP)", Modifier.weight(1f))
+                        Text(p.hp?.let { "$it hp" } ?: "120 hp (por defecto)", style = NumberStyle, color = Palette.Cyan)
+                    }
+                    Slider(
+                        value = (p.hp ?: 120).toFloat(),
+                        onValueChange = { p = p.copy(hp = it.roundToInt()) },
+                        valueRange = 50f..650f,
+                        steps = 119,
+                        colors = sliderColors(),
+                    )
+                    Text(
+                        "Se usa para estimar el torque y potencia instantáneos si el vehículo no los reporta por OBD.",
+                        fontSize = 11.sp,
+                        color = Palette.TextMuted,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FieldLabel("Peso estimado (kg)", Modifier.weight(1f))
+                        Text(p.weightKg?.let { "$it kg" } ?: "1300 kg (por defecto)", style = NumberStyle, color = Palette.Cyan)
+                    }
+                    Slider(
+                        value = (p.weightKg ?: 1300).toFloat(),
+                        onValueChange = { p = p.copy(weightKg = (it / 25).roundToInt() * 25) },
+                        valueRange = 700f..3500f,
+                        steps = 111,
+                        colors = sliderColors(),
+                    )
                     FieldLabel("Tracción")
                     ChoiceChips(Drive.entries, p.drive, { it.label }) { p = p.copy(drive = it) }
                     Spacer(Modifier.height(8.dp))
@@ -652,6 +1038,8 @@ private fun merge(p: VehicleProfile, info: VinInfo): VehicleProfile = p.copy(
     displacementL = info.displacementL ?: p.displacementL,
     fuel = info.fuel ?: p.fuel,
     drive = info.drive ?: p.drive,
+    transmission = info.transmission ?: p.transmission,
+    hp = info.hp ?: p.hp,
     market = if (info.country?.let { it == "EE. UU." || it.contains("UNITED STATES", ignoreCase = true) } == true) Market.US else p.market,
     vin = info.vin,
 )
@@ -676,6 +1064,71 @@ private fun ProtocolRow(label: String, selected: Boolean, onClick: () -> Unit) {
 // Piezas del formulario
 // ======================================================================
 
+@Composable
+fun UnknownVehicleRegistrationDialog(vm: MainViewModel, replacing: Boolean) {
+    val conn by vm.conn.collectAsStateWithLifecycle()
+    val info = (conn as? com.nguevara.obdpulse.ConnState.Connected)?.info ?: return
+    val db by vm.vehicleDb.collectAsStateWithLifecycle()
+    var make by remember(info.vin) { mutableStateOf("") }
+    var model by remember(info.vin) { mutableStateOf("") }
+    var year by remember(info.vin) { mutableStateOf("") }
+    val parsedYear = year.toIntOrNull()
+    val valid = make.isNotBlank() && model.isNotBlank() && parsedYear != null &&
+        parsedYear in 1886..Calendar.getInstance().get(Calendar.YEAR) + 1
+
+    AlertDialog(
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        title = { Text(if (replacing) "Registrar este vehículo" else "Registra el vehículo") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    if (replacing) {
+                        "El VIN conectado no coincide con el perfil activo. Completa marca, modelo y año para guardar el vehículo sin reemplazar el perfil anterior."
+                    } else {
+                        "No se pudo identificar el vehículo automáticamente. Indica al menos marca, modelo y año para guardarlo en el garaje."
+                    },
+                    color = Palette.TextSecondary,
+                )
+                Text(
+                    "Verifica después combustible y cilindrada si el VIN no los identificó; los demás datos del perfil se pueden completar al editarlo.",
+                    color = Palette.TextMuted,
+                    fontSize = 12.sp,
+                )
+                SuggestField("Marca", make, db.makeNames()) { make = it }
+                SuggestField("Modelo", model, db.modelsFor(make)) { model = it }
+                OutlinedTextField(
+                    value = year,
+                    onValueChange = { year = it.filter { char -> char.isDigit() }.take(4) },
+                    label = { Text("Año") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = fieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = valid,
+                onClick = {
+                    vm.saveProfile(
+                        VehicleProfile(
+                            make = make.trim(),
+                            model = model.trim(),
+                            year = parsedYear ?: return@Button,
+                            vin = info.vin?.takeIf(VinDecoder::isValid),
+                        ),
+                        activate = true,
+                    )
+                },
+            ) {
+                Text("Guardar vehículo")
+            }
+        },
+    )
+}
+
 /** Campo de texto con sugerencias tocables debajo (marcas, modelos, motores de la base). */
 @Composable
 private fun SuggestField(label: String, value: String, suggestions: List<String>, onChange: (String) -> Unit) {
@@ -694,7 +1147,7 @@ private fun SuggestField(label: String, value: String, suggestions: List<String>
         if (suggestions.any { it.equals(value.trim(), ignoreCase = true) }) {
             emptyList()
         } else {
-            suggestions.filter { value.isBlank() || it.contains(value.trim(), ignoreCase = true) }.take(12)
+            suggestions.filter { value.isBlank() || it.contains(value.trim(), ignoreCase = true) }
         }
     }
     if (matches.isNotEmpty()) {
@@ -784,55 +1237,5 @@ fun FullScreenDialog(
                 Box(Modifier.weight(1f)) { content() }
             }
         }
-
     }
-}
-
-@Composable
-fun UnknownVehicleRegistrationDialog(vm: MainViewModel, vehicleMismatch: Boolean = false) {
-    var make by rememberSaveable { mutableStateOf("") }
-    var model by rememberSaveable { mutableStateOf("") }
-    var yearText by rememberSaveable { mutableStateOf(Calendar.getInstance().get(Calendar.YEAR).toString()) }
-    val year = yearText.toIntOrNull()
-    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-
-    AlertDialog(
-        onDismissRequest = {},
-        title = { Text("Registra tu vehículo") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    if (vehicleMismatch) {
-                        "El VIN leído no coincide con el perfil activo. Registra marca, modelo y año del vehículo conectado para evitar usar un protocolo incorrecto."
-                    } else {
-                        "No hay un vehículo reconocido o guardado. Indica al menos marca, modelo y año para registrar el perfil y recomendar protocolos."
-                    },
-                    fontSize = 13.sp,
-                    color = Palette.TextSecondary,
-                )
-                OutlinedTextField(value = make, onValueChange = { make = it }, label = { Text("Marca") }, singleLine = true)
-                OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("Modelo") }, singleLine = true)
-                OutlinedTextField(
-                    value = yearText,
-                    onValueChange = { yearText = it.filter(Char::isDigit).take(4) },
-                    label = { Text("Año") },
-                    singleLine = true,
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                enabled = make.isNotBlank() && model.isNotBlank() && year != null && year in 1950..(currentYear + 1),
-                onClick = {
-                    year?.let {
-                        vm.saveProfile(
-                            VehicleProfile(make = make.trim(), model = model.trim(), year = it),
-                            activate = true,
-                        )
-                    }
-                },
-            ) { Text("Guardar vehículo") }
-        },
-        containerColor = Palette.SurfaceHigh,
-    )
 }

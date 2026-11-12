@@ -70,6 +70,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     var tab by rememberSaveable { mutableStateOf(Tab.CONNECT) }
     var lastAutoSwitch by rememberSaveable { mutableStateOf<String?>(null) }
     val profile by vm.activeProfile.collectAsStateWithLifecycle()
+    val scannedVehiclePending by vm.scannedVehiclePending.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // Avisos cortos del ViewModel (protocolo aprendido, resultado de escaneos…)
@@ -137,9 +138,11 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
         val connected = conn as? ConnState.Connected
         val vehicleMismatch = connected?.info?.vin?.let { vin ->
-            profile?.vin?.let { savedVin -> !vin.equals(savedVin, ignoreCase = true) }
+            profile?.vin?.let { savedVin -> !vin.equals(savedVin, ignoreCase = true) } ?: true
         } == true
-        if (connected != null && (profile == null || vehicleMismatch)) {
+        if (connected != null && connected.info.ecuOk && connected.device.type != LinkType.DEMO &&
+            !scannedVehiclePending && (profile == null || vehicleMismatch)
+        ) {
             UnknownVehicleRegistrationDialog(vm, vehicleMismatch)
         }
     }

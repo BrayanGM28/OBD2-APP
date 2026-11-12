@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -32,11 +31,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -105,9 +103,8 @@ fun DashboardScreen(
     LaunchedEffect(Unit) { vm.watch(DASH_KEYS) }
     val tick by vm.historyTick.collectAsStateWithLifecycle()
     val trip by vm.trip.collectAsStateWithLifecycle()
-    var showTripSetup by rememberSaveable { mutableStateOf(false) }
-    var tripKeysCsv by rememberSaveable { mutableStateOf("") }
-    val availableTripMetrics = remember(connected.info) { vm.availableMetrics() }
+    val tripMetricKeys by vm.tripMetricKeys.collectAsStateWithLifecycle()
+    val tripMetrics = remember(connected.info) { vm.availableMetrics() }
 
     Column(
         Modifier
@@ -172,32 +169,15 @@ fun DashboardScreen(
         // ---- Viaje ----
         if (vm.isAvailable(Metrics.SPEED)) {
             TripCard(
-                trip,
-                settings,
-                onStart = {
-                    if (tripKeysCsv.isBlank()) {
-                        tripKeysCsv = MainViewModel.TRIP_KEYS
-                            .filter { key -> availableTripMetrics.any { it.key == key } }
-                            .joinToString(",")
-                    }
-                    showTripSetup = true
-                },
+                trip = trip,
+                settings = settings,
+                metrics = tripMetrics,
+                selectedMetricKeys = tripMetricKeys,
+                onMetricToggle = vm::setTripMetric,
+                onStart = { vm.startTrip() },
                 onStop = { vm.stopTrip() },
             )
         }
-    }
-
-    if (showTripSetup) {
-        TripSelectionDialog(
-            metrics = availableTripMetrics,
-            selectedCsv = tripKeysCsv,
-            onSelectionChange = { tripKeysCsv = it },
-            onDismiss = { showTripSetup = false },
-            onStart = {
-                vm.startTrip(tripKeysCsv.split(',').filter(String::isNotBlank).toSet())
-                showTripSetup = false
-            },
-        )
     }
 }
 
@@ -310,7 +290,16 @@ private fun DashTile(
 }
 
 @Composable
-private fun TripCard(trip: TripState, settings: AppSettings, onStart: () -> Unit, onStop: () -> Unit) {
+private fun TripCard(
+    trip: TripState,
+    settings: AppSettings,
+    metrics: List<Metric>,
+    selectedMetricKeys: Set<String>,
+    onMetricToggle: (String, Boolean) -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    var showMetricPicker by remember { mutableStateOf(false) }
     SectionCard(
         title = "Viaje",
         trailing = { if (trip.active) Pill("● Grabando", Palette.Red) },
@@ -345,67 +334,59 @@ private fun TripCard(trip: TripState, settings: AppSettings, onStart: () -> Unit
                 Text("Detener y guardar CSV")
             }
         } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { showMetricPicker = true }, modifier = Modifier.weight(1f)) {
+                    Text("Elegir variables para guardar")
+                }
+                Text("${metrics.count { it.key in selectedMetricKeys }} seleccionadas", color = Palette.TextMuted, fontSize = 11.sp)
+            }
             Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Rounded.FiberManualRecord, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Iniciar registro de viaje")
             }
             Text(
-                "Elige qué variables guardar en el CSV. Puedes compartir el archivo desde Más → Viajes.",
+                "Guarda las variables elegidas en CSV desde Más → Viajes. Velocidad y consumo también se usan para calcular estadísticas.",
                 fontSize = 12.sp,
                 color = Palette.TextMuted,
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
     }
-}
-
-@Composable
-private fun TripSelectionDialog(
-    metrics: List<Metric>,
-    selectedCsv: String,
-    onSelectionChange: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onStart: () -> Unit,
-) {
-    val selected = selectedCsv.split(',').filter(String::isNotBlank).toSet()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Variables del registro") },
-        text = {
-            Column {
-                Text(
-                    "${selected.size} seleccionadas. Velocidad y consumo también se usan internamente para calcular las estadísticas del viaje.",
-                    fontSize = 12.sp,
-                    color = Palette.TextSecondary,
-                )
-                Spacer(Modifier.height(8.dp))
-                androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 400.dp)) {
-                    items(metrics, key = { it.key }) { metric ->
-                        val checked = metric.key in selected
+    if (showMetricPicker) {
+        AlertDialog(
+            onDismissRequest = { showMetricPicker = false },
+            title = { Text("Variables del registro") },
+            text = {
+                Column(
+                    Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    Text(
+                        "Selecciona las columnas que se escribirán en el CSV. Algunas lecturas internas pueden usarse para las estadísticas sin agregarse como columnas.",
+                        color = Palette.TextSecondary,
+                        fontSize = 13.sp,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    metrics.forEach { metric ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(
-                                checked = checked,
-                                onCheckedChange = {
-                                    val next = if (checked) selected - metric.key else selected + metric.key
-                                    onSelectionChange(metrics.filter { it.key in next }.joinToString(",") { it.key })
-                                },
+                                checked = metric.key in selectedMetricKeys,
+                                onCheckedChange = { onMetricToggle(metric.key, it) },
                             )
-                            Column(Modifier.weight(1f)) {
-                                Text(metric.name, fontSize = 14.sp, color = Palette.TextPrimary)
-                                Text(metric.unit, fontSize = 11.sp, color = Palette.TextMuted)
+                            Column {
+                                Text(metric.name, color = Palette.TextPrimary, fontSize = 13.sp)
+                                Text("${metric.short} (${metric.unit})", color = Palette.TextMuted, fontSize = 11.sp)
                             }
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Button(onClick = onStart, enabled = selected.isNotEmpty()) { Text("Iniciar registro") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
-        containerColor = Palette.SurfaceHigh,
-    )
+            },
+            confirmButton = { TextButton(onClick = { showMetricPicker = false }) { Text("Listo") } },
+            containerColor = Palette.Surface,
+        )
+    }
 }
 
 @Composable

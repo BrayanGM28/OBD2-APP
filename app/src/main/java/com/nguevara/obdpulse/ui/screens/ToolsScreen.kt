@@ -2,7 +2,6 @@ package com.nguevara.obdpulse.ui.screens
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -76,12 +74,14 @@ import com.nguevara.obdpulse.ConnState
 import com.nguevara.obdpulse.MainViewModel
 import com.nguevara.obdpulse.data.AppSettings
 import com.nguevara.obdpulse.data.EconUnit
+import com.nguevara.obdpulse.data.PowerCalcMethod
 import com.nguevara.obdpulse.data.Units
 import com.nguevara.obdpulse.obd.TermLine
-import com.nguevara.obdpulse.vehicle.OnlineService
 import com.nguevara.obdpulse.ui.components.EmptyState
+import com.nguevara.obdpulse.ui.components.FuelTrimLambdaGuideDialog
 import com.nguevara.obdpulse.ui.components.Pill
 import com.nguevara.obdpulse.ui.components.SectionCard
+import com.nguevara.obdpulse.ui.components.SensorDetailDialog
 import com.nguevara.obdpulse.ui.components.Sparkline
 import com.nguevara.obdpulse.ui.theme.NumberStyle
 import com.nguevara.obdpulse.ui.theme.Palette
@@ -99,12 +99,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.rememberCoroutineScope
 import com.nguevara.obdpulse.obd.EcuModule
-import com.nguevara.obdpulse.obd.DtcKind
 import com.nguevara.obdpulse.obd.Metric
-import com.nguevara.obdpulse.obd.Metrics
 import com.nguevara.obdpulse.obd.PidNames
 import com.nguevara.obdpulse.ui.components.InfoRow
 import com.nguevara.obdpulse.vehicle.VehicleProfile
+import com.nguevara.obdpulse.vehicle.OnlineService
 import kotlinx.coroutines.launch
 
 private enum class ToolSection(val label: String) {
@@ -157,7 +156,7 @@ fun ToolsScreen(
 
     // Solo la sección de sensores necesita sondear datos en vivo; las demás liberan el bus.
     LaunchedEffect(section, connected?.info) {
-        if (section == ToolSection.SENSORS && connected != null) {
+        if (section == ToolSection.SENSORS && connected != null && connected.info.ecuOk) {
             vm.watch(vm.availableMetrics().map { it.key }.toSet())
         } else {
             vm.watch(emptySet())
@@ -208,7 +207,7 @@ private fun SensorsSection(
     settings: AppSettings,
     values: Map<String, Double>,
 ) {
-    if (connected == null) {
+    if (connected == null || !connected.info.ecuOk) {
         EmptyState(
             icon = Icons.Rounded.Sensors,
             title = "Todos los sensores",
@@ -222,18 +221,101 @@ private fun SensorsSection(
     val groups = remember(metrics) { metrics.groupBy { it.category }.toSortedMap(compareBy<Metric.Category> { it.ordinal }) }
     val undecoded = remember(connected.info) { vm.undecodedPids() }
     val tick by vm.historyTick.collectAsStateWithLifecycle()
+    val profile by vm.activeProfile.collectAsStateWithLifecycle()
+    val imuCalibrated by vm.imuCalibrated.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val rawValues = remember { mutableStateMapOf<Int, String>() }
     val scope = rememberCoroutineScope()
-    var selectedMetric by remember { mutableStateOf<Metric?>(null) }
-    val alerts = metrics.mapNotNull { metric ->
-        val value = values[metric.key]
-        if (value != null && value.isFinite() && (value < metric.min || value > metric.max)) metric to value else null
-    }
+    var selectedMetricForDetail by remember { mutableStateOf<Metric?>(null) }
+    var showFuelGuide by remember { mutableStateOf(false) }
 
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        item(key = "fuel-guide-banner") {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Palette.Cyan.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, Palette.Cyan.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable { showFuelGuide = true },
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Description, contentDescription = null, tint = Palette.Cyan)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Guía técnica: Ajustes de combustible y Lambda",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = Palette.TextPrimary,
+                        )
+                        Text(
+                            "Aprende a interpretar STFT B1, LTFT B1, Lambda real y comandada.",
+                            fontSize = 11.sp,
+                            color = Palette.TextSecondary,
+                        )
+                    }
+                    TextButton(onClick = { showFuelGuide = true }) {
+                        Text("Ver guía", color = Palette.Cyan)
+                    }
+                }
+                item(key = "phone-imu") {
+                    SectionCard(title = "IMU del teléfono") {
+                        Text(
+                            "Aceleración, giro y orientación se leen de los sensores del celular. El resultado depende de cómo esté fijado; no sustituye al sensor yaw del ABS/ESP ni mide el ángulo real del timón.",
+                            fontSize = 13.sp,
+                            color = Palette.TextSecondary,
+                            lineHeight = 18.sp,
+                        )
+                        if (vm.phoneImuAvailable()) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Button(onClick = vm::calibratePhoneImu) {
+                                    Text(if (imuCalibrated) "Recalibrar IMU quieto" else "Calibrar IMU quieto")
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    if (imuCalibrated) "Offset aplicado" else "Coloca el teléfono inmóvil",
+                                    color = Palette.TextMuted,
+                                    fontSize = 11.sp,
+                                )
+                            }
+                        } else {
+                            Text("Este teléfono no reporta sensores IMU compatibles.", fontSize = 12.sp, color = Palette.TextMuted)
+                        }
+                    }
+                }
+                item(key = "steering-limitations") {
+                    SectionCard(title = "Ángulo del timón y sensores ABS/EPS") {
+                        Text(
+                            "El ángulo del timón y el yaw del control de estabilidad no son PIDs OBD-II genéricos. Normalmente se requieren datos específicos del fabricante y acceso compatible al módulo ABS/EPS; el ELM327 puede no ser suficiente.",
+                            fontSize = 13.sp,
+                            color = Palette.TextSecondary,
+                            lineHeight = 18.sp,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val query = OnlineService.steeringSearchUrl(profile)
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(query)))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Buscar información para este vehículo")
+                        }
+                        Text(
+                            "Si el módulo requiere CAN propietario, herramienta de diagnóstico avanzada o calibración de fábrica, se necesitará el protocolo y equipo compatibles.",
+                            fontSize = 11.sp,
+                            color = Palette.TextMuted,
+                        )
+                    }
+                }
+            }
+        }
         item {
             Text(
                 "${metrics.size} magnitudes disponibles · ${connected.info.supportedPids.count { it % 0x20 != 0 }} PIDs reportados por la ECU",
@@ -241,37 +323,6 @@ private fun SensorsSection(
                 color = Palette.TextMuted,
                 modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
             )
-        }
-        if (!connected.info.ecuOk) {
-            item {
-                Notice(
-                    connected.info.ecuMessage ?: "La ECU no responde. Las lecturas IMU, si están disponibles, provienen del teléfono.",
-                    Palette.Amber,
-                )
-            }
-        }
-        if (alerts.isNotEmpty()) {
-            item {
-                SectionCard(title = "Alertas de rango · ${alerts.size}") {
-                    alerts.forEach { (metric, value) ->
-                        Text(
-                            "${metric.name}: ${Units.display(metric, value, settings)} ${Units.unit(metric, settings)} " +
-                                "(referencia ${metric.min}–${metric.max} ${metric.unit})",
-                            fontSize = 13.sp,
-                            color = Palette.Red,
-                            modifier = Modifier.padding(vertical = 3.dp),
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "El rango es orientativo, no confirma una avería ni falta de calibración. En sensores del vehículo, " +
-                            "la app genérica no puede verificar calibraciones del fabricante; confirma con la ficha técnica y diagnóstico del módulo.",
-                        fontSize = 12.sp,
-                        color = Palette.TextSecondary,
-                        lineHeight = 16.sp,
-                    )
-                }
-            }
         }
         var colorIndex = 0
         groups.forEach { (category, list) ->
@@ -288,7 +339,7 @@ private fun SensorsSection(
                 val color = Palette.Series[colorIndex++ % Palette.Series.size]
                 item(key = m.key) {
                     val samples = remember(tick, m.key) { vm.history(m.key) }
-                    SensorRow(m, samples, values[m.key], color, settings, onClick = { selectedMetric = m })
+                    SensorRow(m, samples, values[m.key], color, settings, onClick = { selectedMetricForDetail = m })
                 }
             }
         }
@@ -328,19 +379,19 @@ private fun SensorsSection(
                 }
             }
         }
-        item {
-            SteeringSensorCard(vm)
-        }
     }
 
-    selectedMetric?.let { metric ->
-        SensorDetailsDialog(
-            vm = vm,
+    selectedMetricForDetail?.let { metric ->
+        SensorDetailDialog(
             metric = metric,
-            value = values[metric.key],
+            currentValue = values[metric.key],
             settings = settings,
-            onDismiss = { selectedMetric = null },
+            onDismiss = { selectedMetricForDetail = null },
         )
+    }
+
+    if (showFuelGuide) {
+        FuelTrimLambdaGuideDialog(onDismiss = { showFuelGuide = false })
     }
 }
 
@@ -353,7 +404,7 @@ private fun SensorRow(
     settings: AppSettings,
     onClick: () -> Unit,
 ) {
-    val outOfRange = value != null && value.isFinite() && (value < m.min || value > m.max)
+    val outOfRange = value != null && (value < m.min || value > m.max)
     Row(
         Modifier
             .fillMaxWidth()
@@ -366,15 +417,13 @@ private fun SensorRow(
         Column(Modifier.weight(1f)) {
             Text(m.name, fontSize = 14.sp, color = Palette.TextPrimary, maxLines = 2, lineHeight = 17.sp)
             Text(
-                when {
-                    m.pid != null -> String.format(Locale.US, "PID %02X", m.pid)
-                    Metrics.isPhoneSensor(m.key) -> "IMU del teléfono"
-                    m.calculation != null -> "Calculado"
-                    else -> "Adaptador"
-                },
+                if (m.pid != null) String.format(Locale.US, "PID %02X", m.pid) else "Calculado",
                 fontSize = 11.sp,
                 color = Palette.TextMuted,
             )
+            if (outOfRange) {
+                Text("ALERTA · fuera de rango orientativo", fontSize = 10.sp, color = Palette.Red)
+            }
         }
         Sparkline(
             samples = samples,
@@ -394,124 +443,6 @@ private fun SensorRow(
             )
             Text(Units.unit(m, settings), fontSize = 11.sp, color = color, maxLines = 1)
         }
-        if (outOfRange) {
-            Spacer(Modifier.width(6.dp))
-            Pill("!", Palette.Red)
-        }
-    }
-}
-
-@Composable
-private fun SensorDetailsDialog(
-    vm: MainViewModel,
-    metric: Metric,
-    value: Double?,
-    settings: AppSettings,
-    onDismiss: () -> Unit,
-) {
-    val calibration by vm.imuCalibration.collectAsStateWithLifecycle()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(metric.name) },
-        text = {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 440.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(Metrics.explanation(metric), fontSize = 14.sp, color = Palette.TextSecondary, lineHeight = 19.sp)
-                Text(
-                    "Lectura actual: ${Units.display(metric, value, settings)} ${Units.unit(metric, settings)}",
-                    fontSize = 14.sp,
-                    color = if (value != null && (value < metric.min || value > metric.max)) Palette.Red else Palette.Cyan,
-                )
-                Text(
-                    "Rango orientativo de alerta: ${metric.min}–${metric.max} ${metric.unit}. No es un límite oficial del fabricante.",
-                    fontSize = 12.sp,
-                    color = Palette.TextMuted,
-                )
-                metric.calculation?.let {
-                    Text("Cómo se obtiene: $it", fontSize = 13.sp, color = Palette.TextPrimary, lineHeight = 18.sp)
-                }
-                if (value != null && (value < metric.min || value > metric.max)) {
-                    Notice(
-                        if (Metrics.isPhoneSensor(metric.key)) {
-                            "La lectura puede deberse a movimiento del teléfono, montaje u offset del IMU. Detén el vehículo antes de calibrar."
-                        } else {
-                            "Puede ser una lectura real, un sensor/cableado defectuoso, protocolo/unidad incorrectos o una calibración requerida. " +
-                                "OBD genérico no permite confirmar la calibración del módulo."
-                        },
-                        Palette.Amber,
-                    )
-                }
-                if (Metrics.isPhoneSensor(metric.key)) {
-                    Button(
-                        onClick = { vm.calibratePhoneImu() },
-                        enabled = !calibration.calibrating,
-                    ) {
-                        Text(if (calibration.calibrating) "Calibrando…" else "Calibrar IMU del teléfono")
-                    }
-                    calibration.message?.let {
-                        Text(it, fontSize = 12.sp, color = if (calibration.calibrated) Palette.Green else Palette.TextSecondary)
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
-        containerColor = Palette.SurfaceHigh,
-    )
-}
-
-@Composable
-private fun SteeringSensorCard(vm: MainViewModel) {
-    val context = LocalContext.current
-    val profile by vm.activeProfile.collectAsStateWithLifecycle()
-    val currentProfile = profile
-    val phoneSensors = vm.availableMetrics().filter { Metrics.isPhoneSensor(it.key) }
-    SectionCard(title = "Ángulo del timón y sensores de dirección") {
-        Text(
-            "El ángulo de dirección suele estar en el módulo ABS/ESP o dirección eléctrica, no en los PIDs OBD-II genéricos del motor. " +
-                "Este ELM327 solo lo podrá leer si el vehículo expone datos mejorados del fabricante y el adaptador accede a ese módulo.",
-            fontSize = 13.sp,
-            color = Palette.TextSecondary,
-            lineHeight = 18.sp,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            if (currentProfile == null) {
-                "Para buscar el procedimiento específico se necesita como mínimo marca, modelo y año, además del módulo ABS/EPS."
-            } else {
-                "Perfil: ${currentProfile.make} ${currentProfile.model} ${currentProfile.year}. Si no aparece, se necesita diagnóstico mejorado del ABS/EPS y confirmar compatibilidad del adaptador."
-            },
-            fontSize = 12.sp,
-            color = Palette.TextMuted,
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = {
-                try {
-                    val url = currentProfile?.let { OnlineService.steeringSearchUrl(it) }
-                        ?: "https://www.google.com/search?q=OBD2+steering+angle+sensor+ABS+EPS+manufacturer+diagnostics"
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                } catch (_: Exception) {
-                    vm.notify("No se pudo abrir la búsqueda web.")
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Buscar acceso para este vehículo") }
-        Text(
-            if (phoneSensors.isEmpty()) {
-                "Este teléfono no expone acelerómetro lineal, giroscopio u orientación compatibles. Se necesita un teléfono con esos sensores."
-            } else {
-                "IMU disponible en este teléfono: ${phoneSensors.joinToString { it.short }}. Mide el teléfono, no el vehículo; fíjalo firmemente y calibra inmóvil."
-            },
-            fontSize = 12.sp,
-            color = Palette.TextMuted,
-            lineHeight = 16.sp,
-            modifier = Modifier.padding(top = 4.dp),
-        )
     }
 }
 
@@ -532,7 +463,6 @@ private fun ModulesSection(vm: MainViewModel, connected: ConnState.Connected?) {
         return
     }
     val state by vm.modules.collectAsStateWithLifecycle()
-    val profile by vm.activeProfile.collectAsStateWithLifecycle()
 
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
@@ -570,10 +500,6 @@ private fun ModulesSection(vm: MainViewModel, connected: ConnState.Connected?) {
 
         items(state.modules, key = { it.address }) { m -> ModuleCard(m) }
 
-        item {
-            AdvancedSystemsCoverage(profile)
-        }
-
         if (state.modules.isNotEmpty()) {
             item {
                 SectionCard(title = "¿Se pueden reprogramar los sensores?") {
@@ -594,54 +520,6 @@ private fun ModulesSection(vm: MainViewModel, connected: ConnState.Connected?) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun AdvancedSystemsCoverage(profile: VehicleProfile?) {
-    val targetSubaru = profile?.let {
-        it.make.equals("Subaru", ignoreCase = true) &&
-            it.model.contains("Impreza", ignoreCase = true) &&
-            it.year == 2014 &&
-            it.engine.contains("FB20", ignoreCase = true)
-    } == true
-
-    SectionCard(title = "ABS/EPS, airbags, estabilidad y transmisión") {
-        if (targetSubaru) {
-            Text(
-                "Perfil: Subaru Impreza GJ Sedan 2014 · FB20 · Colombia. Esta versión lee OBD-II genérico " +
-                    "del motor, pero todavía no implementa Subaru SSM para consultar ABS/EPS, SRS/airbags, " +
-                    "TCM ni sus sensores.",
-                fontSize = 13.sp,
-                color = Palette.TextSecondary,
-                lineHeight = 18.sp,
-            )
-            Spacer(Modifier.height(6.dp))
-        }
-        Text(
-            "El escaneo ELM327 de esta pantalla solo confirma ECUs que responden a OBD-II genérico. " +
-                "Un resultado vacío no significa que el vehículo no tenga ese módulo; tampoco se puede contar " +
-                "cuántos airbags o sensores están instalados sin la información específica del fabricante.",
-            fontSize = 13.sp,
-            color = Palette.TextSecondary,
-            lineHeight = 18.sp,
-        )
-        Spacer(Modifier.height(8.dp))
-        InfoRow("ABS/EPS y sensores de freno", "No consultados por el ELM327 genérico")
-        InfoRow("Estabilidad y tracción (ESC/TCS)", "No consultados por el ELM327 genérico")
-        InfoRow("Airbags (SRS)", "No consultados; tampoco se puede contar las bolsas")
-        InfoRow("Transmisión (TCM)", "No consultada por el diagnóstico actual")
-        Text(
-            "La falta de datos aquí no indica una falla ni que el vehículo carezca del módulo. Para consultar " +
-                "sensores de rueda/freno, dirección, SRS, TCM o asistente de pendiente hace falta diagnóstico " +
-                "mejorado de la marca/modelo y una interfaz compatible (en Subaru, SSM; el ELM327 Mini queda " +
-                "limitado a OBD-II genérico). Esta app no enviará comandos de activación, borrado ni programación " +
-                "a esos sistemas.",
-            fontSize = 12.sp,
-            color = Palette.TextMuted,
-            lineHeight = 17.sp,
-            modifier = Modifier.padding(top = 8.dp),
-        )
     }
 }
 
@@ -672,22 +550,6 @@ private fun ModuleCard(m: EcuModule) {
         if (m.pidCount > 0) InfoRow("PIDs 01–20", m.pidCount.toString())
         InfoRow("Resultados de pruebas (modo 06)", if (m.supportsMode06) "Sí" else "No")
         InfoRow("Pruebas activas (modo 08)", if (m.supportsMode08) "Sí (no se ejecutan)" else "No")
-        InfoRow("Códigos OBD-II leídos", m.dtcs.size.toString())
-        m.dtcs.take(8).forEach { dtc ->
-            Text(
-                "${dtc.code} · ${when (dtc.kind) {
-                    DtcKind.STORED -> "Confirmado"
-                    DtcKind.PENDING -> "Pendiente"
-                    DtcKind.PERMANENT -> "Permanente"
-                }} — ${dtc.description}",
-                fontSize = 12.sp,
-                color = Palette.TextSecondary,
-                lineHeight = 17.sp,
-            )
-        }
-        if (m.dtcs.size > 8) {
-            Text("y ${m.dtcs.size - 8} más", fontSize = 12.sp, color = Palette.TextMuted)
-        }
         m.vin?.let { InfoRow("VIN", it) }
     }
 }
@@ -1081,6 +943,58 @@ private fun SettingsSection(vm: MainViewModel, settings: AppSettings) {
                     subtitle = "Útil cuando el teléfono va en el soporte del carro",
                     checked = settings.keepScreenOn,
                     onChange = { v -> vm.updateSettings { it.copy(keepScreenOn = v) } },
+                )
+            }
+        }
+
+        item {
+            SectionCard(title = "Cálculo de Potencia y Torque") {
+                Text(
+                    "Método utilizado para estimar el torque (Nm) y la potencia (HP/kW) si la ECU no los reporta de forma nativa.",
+                    fontSize = 12.sp,
+                    color = Palette.TextSecondary,
+                    lineHeight = 16.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                PowerCalcMethod.entries.forEach { method ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { vm.updateSettings { it.copy(powerCalcMethod = method) } }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = settings.powerCalcMethod == method,
+                            onClick = null,
+                            colors = RadioButtonDefaults.colors(selectedColor = Palette.Cyan),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(method.label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Palette.TextPrimary)
+                            Text(method.description, fontSize = 11.sp, color = Palette.TextMuted, lineHeight = 14.sp)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                SliderRow(
+                    title = "Potencia de fábrica de referencia",
+                    valueLabel = { "${it.roundToInt()} HP" },
+                    value = settings.hp.toFloat(),
+                    range = 40f..600f,
+                    steps = 111,
+                    help = "Se sincroniza con el perfil del vehículo activo o se usa este valor por defecto.",
+                    onCommit = { v -> vm.updateSettings { it.copy(hp = v.roundToInt()) } },
+                )
+                SliderRow(
+                    title = "Peso del vehículo con conductor",
+                    valueLabel = { "${it.roundToInt()} kg" },
+                    value = settings.weightKg.toFloat(),
+                    range = 600f..3500f,
+                    steps = 289,
+                    help = "Necesario para el método de inercia y aceleración dinámica (F = m · a).",
+                    onCommit = { v -> vm.updateSettings { it.copy(weightKg = (v / 10).roundToInt() * 10) } },
                 )
             }
         }

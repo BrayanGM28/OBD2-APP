@@ -2,6 +2,7 @@ package com.nguevara.obdpulse.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,10 +17,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.HourglassEmpty
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
@@ -54,6 +57,7 @@ import com.nguevara.obdpulse.obd.DtcKind
 import com.nguevara.obdpulse.obd.Metrics
 import com.nguevara.obdpulse.obd.Severity
 import com.nguevara.obdpulse.ui.components.EmptyState
+import com.nguevara.obdpulse.ui.components.FuelTrimLambdaGuideDialog
 import com.nguevara.obdpulse.ui.components.InfoRow
 import com.nguevara.obdpulse.ui.components.Pill
 import com.nguevara.obdpulse.ui.components.SectionCard
@@ -81,6 +85,7 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
     val diag by vm.diag.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     var confirmClear by remember { mutableStateOf(false) }
+    var showFuelGuide by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         vm.watch(emptySet()) // libera el bus para los comandos de diagnóstico
@@ -152,6 +157,39 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(if (diag.loading) diag.step.ifEmpty { "Leyendo…" } else "Leer diagnóstico")
+                }
+            }
+        }
+
+        item {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Palette.Cyan.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, Palette.Cyan.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable { showFuelGuide = true },
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Description, contentDescription = null, tint = Palette.Cyan)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Diagnóstico de mezcla: STFT, LTFT y Lambda",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = Palette.TextPrimary,
+                        )
+                        Text(
+                            "Aprende a interpretar ajustes de combustible pobre/rico y sondas lambda para códigos P0171, P0172, P0420.",
+                            fontSize = 11.sp,
+                            color = Palette.TextSecondary,
+                        )
+                    }
+                    TextButton(onClick = { showFuelGuide = true }) {
+                        Text("Ver guía", color = Palette.Cyan)
+                    }
                 }
             }
         }
@@ -271,6 +309,10 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
             },
             containerColor = Palette.SurfaceHigh,
         )
+    }
+
+    if (showFuelGuide) {
+        FuelTrimLambdaGuideDialog(onDismiss = { showFuelGuide = false })
     }
 }
 

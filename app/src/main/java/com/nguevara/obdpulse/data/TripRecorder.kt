@@ -37,8 +37,9 @@ class TripRecorder(private val dir: File) {
     private var lastSampleMs = 0L
     private var speedTimeSum = 0.0
     private var movingSeconds = 0.0
+
     val recordedKeys: Set<String>
-        @Synchronized get() = columns.map { it.key }.toSet()
+        @Synchronized get() = columns.mapTo(linkedSetOf()) { it.key }
 
     @Synchronized
     fun start(columns: List<Metric>) {

@@ -45,7 +45,6 @@ data class EcuModule(
     val supportsMode06: Boolean,
     val supportsMode08: Boolean,
     val pidCount: Int,
-    val dtcs: List<DtcItem> = emptyList(),
 ) {
     /** Tiene software con identificador de calibración: el fabricante puede reprogramarlo con su herramienta. */
     val hasCalibration: Boolean get() = calibrationIds.isNotEmpty() || cvns.isNotEmpty()
@@ -443,14 +442,13 @@ class Elm327(private val transport: ObdTransport) {
     // ------------------------------------------------------------------
 
     /**
-     * Detecta qué módulos responden y lee su identificación con el modo 09 y sus DTC OBD:
+     * Detecta qué módulos responden y lee su identificación con el modo 09:
      *   0900 tipos de información soportados   0904 ID de calibración (CALID)
      *   0906 número de verificación (CVN)      090A nombre del módulo
-     * También consulta DTC 03/07/0A, modo 06 (resultados de pruebas) y modo 08 (pruebas activas).
+     * También consulta si soporta el modo 06 (resultados de pruebas) y el modo 08 (pruebas activas).
      *
-     * Ningún comando de esta función escribe en la ECU. Las consultas son OBD-II genéricas y no
-     * identifican por sí solas módulos SRS, ABS/EPS o asistentes específicos del fabricante.
-     * Solo se cambian cabeceras del propio adaptador (ATH1 / ATSH), que se restauran al terminar.
+     * Ningún comando de esta función escribe en la ECU. Solo se cambian cabeceras del propio
+     * adaptador (ATH1 / ATSH), que se restauran al terminar.
      */
     suspend fun scanModules(onStep: (String) -> Unit): List<EcuModule> {
         onStep("Buscando módulos que respondan…")
@@ -507,20 +505,11 @@ class Elm327(private val transport: ObdTransport) {
         val pidCount = queryMode01(0x00, 3_000).firstOrNull()?.let { d ->
             if (d.size < 4) 0 else d.take(4).sumOf { Integer.bitCount(it) } - (d[3] and 1)
         } ?: 0
-        val dtcs = mutableListOf<DtcItem>()
-        for ((mode, kind) in listOf(
-            "03" to DtcKind.STORED,
-            "07" to DtcKind.PENDING,
-            "0A" to DtcKind.PERMANENT,
-        )) {
-            dtcs += readDtcs(mode).map { DtcInfo.item(it, kind) }
-        }
         return EcuModule(
             address = address,
             name = name?.let { moduleNameFromCode(it) },
             calibrationIds = calIds,
             cvns = cvns,
-            dtcs = dtcs.distinctBy { it.code to it.kind },
             infoTypes = infoTypes,
             vin = vin,
             supportsMode06 = m06,

@@ -17,12 +17,23 @@ enum class EconUnit(val label: String) {
     MPG("mpg (EE. UU.)"),
 }
 
+enum class PowerCalcMethod(val label: String, val description: String) {
+    AUTO("Automático (recomendado)", "Usa datos nativos si existen; si no, combina ficha técnica, MAF y combustible."),
+    SPEC_LOAD("Ficha técnica (HP) + Carga y RPM", "Estima la potencia según los HP declarados del motor y el porcentaje de carga OBD."),
+    MAF("Flujo de aire (MAF)", "Calcula potencia según los g/s de aire admitidos (aprox. 1,32 hp por g/s en gasolina)."),
+    FUEL_ENERGY("Energía del combustible (L/h)", "Convierte el consumo de combustible instantáneo en potencia mecánica útil según eficiencia térmica."),
+    ACCEL("Dinámica e inercia (F = m·a)", "Estima los caballos calculando la aceleración longitudinal y el peso del vehículo."),
+}
+
 data class AppSettings(
     val econUnit: EconUnit = EconUnit.KM_PER_GAL,
     val fahrenheit: Boolean = false,
     val diesel: Boolean = false,
     val displacementL: Double = 1.6,
     val redlineRpm: Int = 6000,
+    val hp: Int = 120,
+    val weightKg: Int = 1300,
+    val powerCalcMethod: PowerCalcMethod = PowerCalcMethod.AUTO,
     val protocol: String = "0",
     val pollDelayMs: Int = 0,
     val keepScreenOn: Boolean = true,
@@ -65,6 +76,10 @@ class SettingsStore(context: Context) {
             diesel = prefs.getBoolean("diesel", false),
             displacementL = prefs.getFloat("displacement", 1.6f).toDouble(),
             redlineRpm = prefs.getInt("redline", 6000),
+            hp = prefs.getInt("hp", 120),
+            weightKg = prefs.getInt("weight_kg", 1300),
+            powerCalcMethod = runCatching { PowerCalcMethod.valueOf(prefs.getString("power_calc_method", PowerCalcMethod.AUTO.name)!!) }
+                .getOrDefault(PowerCalcMethod.AUTO),
             protocol = prefs.getString("protocol", "0") ?: "0",
             pollDelayMs = prefs.getInt("poll_delay", 0),
             keepScreenOn = prefs.getBoolean("keep_screen", true),
@@ -81,6 +96,9 @@ class SettingsStore(context: Context) {
             putBoolean("diesel", s.diesel)
             putFloat("displacement", s.displacementL.toFloat())
             putInt("redline", s.redlineRpm)
+            putInt("hp", s.hp)
+            putInt("weight_kg", s.weightKg)
+            putString("power_calc_method", s.powerCalcMethod.name)
             putString("protocol", s.protocol)
             putInt("poll_delay", s.pollDelayMs)
             putBoolean("keep_screen", s.keepScreenOn)

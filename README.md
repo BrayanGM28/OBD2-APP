@@ -15,7 +15,19 @@ Kotlin + Jetpack Compose, tema oscuro, en español. Android 8.0 o superior.
 
 La app consulta los PIDs soportados por la ECU (0100, 0120, 0140…) y solo muestra lo que tu carro reporta.
 
-## Novedades de la versión 1.1
+## Novedades de la versión 1.2
+
+- **Perfiles y catálogo ampliados**: la base combina el catálogo actualizado con las marcas, modelos y motores que ya estaban disponibles; incluye reglas de protocolo y plantillas nuevas. "Hunday" se acepta como alias de Hyundai.
+- **Registro al escanear**: guarda o actualiza el vehículo cuando el VIN permite identificarlo. Si no alcanza para identificar marca, modelo y año, solicita esos datos antes de guardarlo.
+- **Potencia estimada mejorada**: los perfiles pueden guardar HP y peso para afinar los cálculos de par y potencia.
+- **IMU del teléfono**: muestra aceleración lineal, giro y orientación del celular, con calibración en reposo. No se confunde con sensores del ABS/EPS.
+- **Alertas y explicación de sensores**: cada lectura incluye su descripción y una alerta si sale del rango orientativo. La app aclara que no puede certificar la calibración de una ECU.
+- **Viajes configurables**: permite elegir las columnas de sensores del CSV; velocidad y consumo también se leen internamente para estadísticas.
+- **Timón y ABS/EPS**: explica que el ángulo real de dirección suele requerir datos propietarios y herramientas compatibles, y permite buscar información del vehículo.
+
+La app conserva el nombre **OBD Pulse**.
+
+## Funciones anteriores de la versión 1.1
 
 - **Mis vehículos**: marca, modelo, versión, año, motor, combustible, cilindrada, tracción, transmisión y mercado de origen.
   Con eso la app elige el **orden de protocolos** a probar (p. ej. Nissan Frontier NP300 diésel 2013 → KWP lento, KWP rápido,
@@ -28,65 +40,50 @@ La app consulta los PIDs soportados por la ECU (0100, 0120, 0140…) y solo mues
   combinaciones rápidas, suavizado y ventanas hasta 10 min.
 - **Internet**: actualización de la base de vehículos desde este repositorio, decodificación del VIN (NHTSA vPIC),
   búsqueda web del protocolo y botón para compartir un protocolo confirmado y sumarlo a la base.
-- **Verificación de módulos (solo lectura)**: identifica ECUs que contestan a OBD-II genérico y consulta en ellas DTC
-  confirmados/pendientes/permanentes, CALID, CVN, nombre y soporte de modos 06/08. No es un inventario de todos los
-  módulos instalados ni lee ABS/EPS, SRS/airbags, TCM o asistentes con el ELM327 Mini. Para el Subaru Impreza GJ
-  2014 FB20 del perfil de ejemplo, esta versión se limita a OBD-II genérico del motor; el diagnóstico Subaru SSM
-  requiere otra interfaz y una integración que aún no está implementada. Un módulo que no aparece no se considera
-  ausente; la app no estima cuántos airbags o sensores tiene el vehículo ni activa pruebas en esos sistemas.
-  La app no reprograma nada.
-- **Registro guiado**: si conectas sin perfil de vehículo, solicita marca, modelo y año para guardar el vehículo.
-- **Sensores explicados y alertas**: toca una lectura en Más → Sensores para ver qué mide, cómo se calcula y cómo interpretar
-  sus rangos orientativos. Un aviso de rango no diagnostica por sí mismo una falla ni confirma que falte calibración.
-- **IMU del teléfono**: cuando el celular tiene los sensores de hardware, muestra aceleración lineal, giro y orientación
-  de sus propios ejes; permite calibrar el sesgo con el teléfono quieto. No son mediciones directas del vehículo.
-- **Viajes configurables**: antes de iniciar el CSV, selecciona qué variables quieres guardar.
-- **Dirección**: el ángulo del timón suele estar en el módulo ABS/ESP o EPS y no forma parte de los PIDs OBD-II genéricos.
-  La app indica qué información adicional hace falta y permite buscar el procedimiento específico del vehículo.
+- **Verificación de módulos (solo lectura)**: qué ECUs responden, su CALID, CVN, nombre y si soportan modos 06/08.
+  La app no reprograma nada: escribir software en una ECU con un ELM327 puede dejarla inservible.
 
 ## Base de vehículos (`app/src/main/assets/vehicles.json`)
 
-Es la misma que la app descarga en **Más → Ajustes → Base de vehículos**. Para agregar un carro, añade una regla en `rules`
+Es la misma que la app descarga en **Más → Ajustes → Base de vehículos**. La versión incluida combina los modelos y reglas de la base anterior con la actualización más reciente. Para agregar un carro, añade una regla en `rules`
 y **sube el número de `version`**; la app la tomará al buscar actualización (sin reinstalar).
+
+Fuentes externas como OpenDBC contienen señales CAN específicas de fabricantes y no se pueden usar directamente como PIDs OBD-II genéricos con un ELM327. Para el ángulo real del timón u otros datos de ABS/EPS puede hacer falta el protocolo propietario y un adaptador/herramienta compatible.
 
 ```json
 {"make": "Nissan", "model": "Frontier|NP300", "fuel": "diesel", "from": 2005, "to": 2015,
  "protocols": ["4", "5", "3"], "slowEcu": true, "confidence": "media", "note": "…"}
 ```
 
-`make` coincide exacto; `model` y `engine` coinciden si el texto del perfil contiene alguna alternativa (`|`).
+`make` coincide exacto o por alias; `model` y `engine` coinciden si el texto del perfil contiene alguna alternativa (`|`).
 Gana la regla más específica. Protocolos: 1 J1850 PWM, 2 J1850 VPW, 3 ISO 9141-2, 4 KWP lento, 5 KWP rápido,
 6 CAN 11/500, 7 CAN 29/500, 8 CAN 11/250, 9 CAN 29/250, A J1939.
-
-## Fuentes de datos externas consultadas
-
-Revisión realizada el 6 de noviembre de 2026:
-
-- [commaai/opendbc](https://github.com/commaai/opendbc) es una base DBC activa, con soporte documentado para cientos
-  de vehículos y cambios recientes (incluye señales de dirección en algunos modelos). Sus DBC describen mensajes del bus
-  CAN del fabricante; no son una base de protocolos/PIDs OBD-II genéricos ni se pueden usar directamente con un ELM327 Mini.
-- [python-OBD](https://github.com/brendan-w/python-OBD) mantiene un catálogo útil de comandos OBD-II genéricos, pero su
-  último cambio publicado que se verificó aquí fue la versión 0.7.3, el 7 de abril de 2025; no sustituye una base por marca
-  de protocolos o datos de dirección.
-- [NHTSA vPIC](https://vpic.nhtsa.dot.gov/) ayuda a decodificar VIN y características del vehículo, pero no identifica
-  el protocolo OBD ni garantiza datos completos para vehículos de todos los mercados.
-
-Por esas diferencias, la app conserva `vehicles.json` para recomendar protocolos OBD-II y actualizarlo desde este
-repositorio. No se importaron automáticamente DBC de terceros: requerirían acceso a CAN específico del vehículo y una
-integración distinta, además de validación por modelo. La base local también puede ampliarse con protocolos confirmados
-por usuarios desde **Vehículos → Compartir resultado**.
 
 ## Cómo obtener el .apk
 
 ### Opción A — GitHub Actions (sin instalar nada)
 
-1. El código de esta versión está en la rama [`feature/obd-pulse-v1.1`](https://github.com/BrayanGM28/OBD2-APP/tree/feature/obd-pulse-v1.1) del repositorio [OBD2-APP](https://github.com/BrayanGM28/OBD2-APP).
-2. Cada push a esa rama activa **Actions → Compilar APK** automáticamente.
-3. Al terminar, descarga `OBDPulse.apk` desde **Artifacts** en el resumen de la ejecución o desde **Releases**. En un teléfono, inicia sesión en GitHub si el repositorio es privado.
+1. Crea un repositorio nuevo en GitHub (puede ser privado).
+2. Sube el contenido de esta carpeta. Desde un computador con git:
+   ```bash
+   cd OBDPulse
+   git init
+   git add .
+   git commit -m "OBD Pulse"
+   git branch -M main
+   git remote add origin https://github.com/TU_USUARIO/OBDPulse.git
+   git push -u origin main
+   ```
+   Sin git: en GitHub usa **Add file → Upload files** y arrastra el contenido de la carpeta.
+   Ojo: la carpeta `.github` es oculta en Mac/Windows; si no se sube, créala a mano con
+   **Add file → Create new file**, nombre `.github/workflows/build-apk.yml`, y pega el contenido del archivo.
+3. Entra a la pestaña **Actions**: el flujo "Compilar APK" arranca solo (≈ 5–8 min la primera vez).
+4. Cuando termine, ve a **Releases** (en la página principal del repo) y descarga `OBDPulse.apk` desde el celular.
+   También queda como artefacto en el resumen de la ejecución en Actions.
 
 ### Opción B — Android Studio
 
-Abre la carpeta del proyecto en Android Studio → espera la sincronización de Gradle →
+Abre la carpeta `OBDPulse` en Android Studio → espera la sincronización de Gradle →
 **Build → Build App Bundle(s) / APK(s) → Build APK(s)**. El archivo queda en
 `app/build/outputs/apk/debug/app-debug.apk`.
 

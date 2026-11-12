@@ -17,6 +17,8 @@ data class VinInfo(
     val displacementL: Double?,
     val fuel: Fuel?,
     val drive: Drive?,
+    val transmission: Transmission? = null,
+    val hp: Int? = null,
     val country: String?,
     val source: String,
     val warning: String? = null,
@@ -126,7 +128,7 @@ object VinDecoder {
 object OnlineService {
 
     /** Base de vehículos publicada en el repositorio de la app (se actualiza con cada commit). */
-    const val DEFAULT_DB_URL = "https://raw.githubusercontent.com/BrayanGM28/OBD2-APP/feature/obd-pulse-v1.1/app/src/main/assets/vehicles.json"
+    const val DEFAULT_DB_URL = "https://raw.githubusercontent.com/TU_USUARIO/OBDPulse/main/app/src/main/assets/vehicles.json"
 
     private const val USER_AGENT = "OBDPulse/1.1 (Android)"
 
@@ -183,6 +185,17 @@ object OnlineService {
             "fwd" in driveText || "front" in driveText -> Drive.FWD
             else -> null
         }
+        val transText = f("TransmissionStyle")?.lowercase(Locale.US).orEmpty()
+        val transmission = when {
+            "cvt" in transText -> Transmission.CVT
+            "automatic" in transText -> Transmission.AUTOMATIC
+            "manual" in transText -> Transmission.MANUAL
+            else -> null
+        }
+        val hpVal = f("EngineHP")?.toDoubleOrNull()?.toInt()
+            ?: f("EngineHP_to")?.toDoubleOrNull()?.toInt()
+            ?: f("EngineKW")?.toDoubleOrNull()?.let { (it * 1.341).toInt() }
+
         val engine = listOfNotNull(f("EngineModel"), f("EngineConfiguration"), f("EngineCylinders")?.let { "$it cil." })
             .joinToString(" ").ifBlank { null }
         val errorText = f("ErrorText")
@@ -196,6 +209,8 @@ object OnlineService {
             displacementL = f("DisplacementL")?.toDoubleOrNull(),
             fuel = fuel,
             drive = drive,
+            transmission = transmission,
+            hp = hpVal,
             country = f("PlantCountry") ?: offline?.country,
             source = "NHTSA vPIC (internet)",
             warning = if (errorText != null && !errorText.startsWith("0")) {
@@ -213,15 +228,15 @@ object OnlineService {
         return "https://www.google.com/search?q=" + URLEncoder.encode(q, "UTF-8")
     }
 
-    /** Búsqueda de acceso específico al ángulo del sensor de dirección en ABS/EPS. */
-    fun steeringSearchUrl(p: VehicleProfile): String {
-        val q = listOf(
-            p.make,
-            p.model,
-            p.year.toString(),
-            p.engine,
-            "steering angle sensor live data ABS EPS OBD2",
-        ).filter { it.isNotBlank() }.joinToString(" ")
+    /** Búsqueda contextual para datos de dirección que suelen ser propietarios del ABS/EPS. */
+    fun steeringSearchUrl(p: VehicleProfile?): String {
+        val q = listOfNotNull(
+            p?.make,
+            p?.model,
+            p?.year?.toString(),
+            p?.engine?.takeIf { it.isNotBlank() },
+            "steering angle sensor EPS ABS yaw live data diagnostic",
+        ).joinToString(" ")
         return "https://www.google.com/search?q=" + URLEncoder.encode(q, "UTF-8")
     }
 

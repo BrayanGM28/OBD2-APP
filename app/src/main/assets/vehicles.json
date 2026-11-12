@@ -1,108 +1,1943 @@
 {
-  "version": 1,
-  "updated": "2026-11-06",
-  "info": "Base de protocolos OBD de OBD Pulse. Cada regla dice qué protocolos ATSP probar y en qué orden. make exacto; model/engine: el perfil CONTIENE alguna alternativa separada por |. fuel: gasolina|diesel|hibrido|gas|flex. market: latam|us|eu|other. La regla más específica gana. Protocolos ELM327: 1 J1850 PWM, 2 J1850 VPW, 3 ISO 9141-2, 4 KWP lento, 5 KWP rápido, 6 CAN 11/500, 7 CAN 29/500, 8 CAN 11/250, 9 CAN 29/250, A J1939.",
+  "version": 3,
+  "updated": "2026-11-12",
+  "info": "Base de protocolos OBD de OBD Pulse. Cada regla dice qué protocolos ATSP probar y en qué orden. make exacto o alias; model/engine: el perfil CONTIENE alguna alternativa separada por |. fuel: gasolina|diesel|hibrido|gas|flex. market: latam|us|eu|other. La regla más específica gana. Protocolos ELM327: 1 J1850 PWM, 2 J1850 VPW, 3 ISO 9141-2, 4 KWP lento, 5 KWP rápido, 6 CAN 11/500, 7 CAN 29/500, 8 CAN 11/250, 9 CAN 29/250, A J1939.",
   "makes": [
-    {"make": "Audi", "models": ["A1", "A3", "A4", "A5", "A6", "Q2", "Q3", "Q5", "Q7"], "engines": ["1.4 TFSI", "1.8 TFSI", "2.0 TFSI", "2.0 TDI"]},
-    {"make": "BMW", "models": ["Serie 1", "Serie 3", "Serie 5", "X1", "X3", "X5"], "engines": ["N46", "N20", "B48", "B58", "N47"]},
-    {"make": "BYD", "models": ["F0", "F3", "Dolphin", "Song", "Yuan", "Seal"], "engines": ["Eléctrico", "DM-i"]},
-    {"make": "Chery", "models": ["QQ", "Tiggo 2", "Tiggo 3", "Tiggo 4", "Tiggo 7", "Arrizo"], "engines": ["1.1", "1.5", "1.6"]},
-    {"make": "Chevrolet", "models": ["Spark", "Spark GT", "Aveo", "Aveo Emotion", "Sail", "Onix", "Prisma", "Cruze", "Optra", "Corsa", "Chevy", "Captiva", "Tracker", "Equinox", "D-Max", "LUV D-Max", "Colorado", "N300", "Silverado"], "engines": ["B10", "1.2", "1.4", "1.6", "1.8", "2.4", "3.0 TD"]},
-    {"make": "Citroën", "models": ["C3", "C4", "C-Elysée", "Berlingo", "C4 Cactus"], "engines": ["TU3", "EC5", "1.6 HDi"]},
-    {"make": "Fiat", "models": ["Uno", "Palio", "Siena", "Strada", "Mobi", "Argo", "Cronos", "Toro"], "engines": ["Fire 1.0", "Fire 1.4", "E.torQ 1.6", "1.3 Firefly"]},
-    {"make": "Ford", "models": ["Fiesta", "Focus", "EcoSport", "Escape", "Explorer", "Ranger", "F-150", "Fusion", "Mustang"], "engines": ["Zetec", "Sigma 1.6", "Duratec 2.0", "EcoBoost", "Puma 2.2 TDCi", "Puma 3.2 TDCi"]},
-    {"make": "Great Wall", "models": ["Wingle", "Haval H6", "Poer", "Voleex C30"], "engines": ["2.0 diésel", "2.8 TC", "1.5"]},
-    {"make": "Honda", "models": ["Civic", "City", "Fit", "Accord", "CR-V", "HR-V", "Pilot"], "engines": ["L15", "R18", "K20", "K24"]},
-    {"make": "Hyundai", "models": ["i10", "Grand i10", "Accent", "i25", "Elantra", "Tucson", "Santa Fe", "Creta", "Atos", "Getz", "H-1", "Porter"], "engines": ["Kappa 1.0", "Kappa 1.2", "Gamma 1.4", "Gamma 1.6", "Nu 2.0", "Theta 2.4", "CRDi 2.0", "CRDi 2.5", "D4CB"]},
-    {"make": "Isuzu", "models": ["D-Max", "Trooper", "Rodeo"], "engines": ["4JJ1", "4JA1", "4JK1"]},
-    {"make": "Jeep", "models": ["Wrangler", "Cherokee", "Grand Cherokee", "Compass", "Renegade"], "engines": ["3.6 Pentastar", "2.4 Tigershark", "3.7", "4.0"]},
-    {"make": "Kia", "models": ["Picanto", "Rio", "Cerato", "Sportage", "Sorento", "Soluto", "Stonic", "Seltos"], "engines": ["Kappa 1.0", "Kappa 1.25", "Gamma 1.4", "Gamma 1.6", "Nu 2.0", "CRDi 2.0"]},
-    {"make": "Mazda", "models": ["Mazda 2", "Mazda 3", "Mazda 6", "CX-3", "CX-30", "CX-5", "CX-9", "BT-50", "Allegro", "323"], "engines": ["Skyactiv-G 1.5", "Skyactiv-G 2.0", "Skyactiv-G 2.5", "MZR 1.6", "MZR 2.0", "WL 2.5 diésel"]},
-    {"make": "Mercedes-Benz", "models": ["Clase A", "Clase C", "Clase E", "GLA", "GLC", "Sprinter"], "engines": ["M271", "M274", "OM651"]},
-    {"make": "Mitsubishi", "models": ["L200", "Montero", "Montero Sport", "Outlander", "ASX", "Lancer", "Mirage", "Nativa"], "engines": ["4D56", "4M41", "4N15", "4G63", "4B11"]},
-    {"make": "Nissan", "models": ["Frontier", "NP300", "Navara", "Sentra", "Versa", "March", "Tiida", "X-Trail", "Qashqai", "Kicks", "Pathfinder", "Patrol", "Murano", "Almera"], "engines": ["YD25", "YD22", "ZD30", "QD32", "KA24DE", "QR25DE", "VQ40DE", "HR16DE", "MR20DE", "HR15DE", "QG16DE"]},
-    {"make": "Peugeot", "models": ["206", "207", "208", "301", "307", "308", "2008", "3008", "Partner"], "engines": ["TU3", "TU5", "EC5", "EP6", "1.6 HDi"]},
-    {"make": "RAM", "models": ["700", "1000", "1500", "2500"], "engines": ["5.7 HEMI", "6.7 Cummins", "1.4", "2.2"]},
-    {"make": "Renault", "models": ["Sandero", "Sandero Stepway", "Logan", "Symbol", "Clio", "Twingo", "Megane", "Duster", "Duster Oroch", "Kangoo", "Kwid", "Captur", "Koleos", "Fluence", "Alaskan"], "engines": ["D4F 1.2 16V", "K7M 1.6 8V", "K4M 1.6 16V", "H4M 1.6 16V", "F4R 2.0 16V", "SCe 1.0", "K9K 1.5 dCi"]},
-    {"make": "Subaru", "models": ["Impreza", "XV", "Crosstrek", "Forester", "Legacy", "Outback", "WRX"], "engines": ["FB16", "FB20", "FB25", "EJ20", "EJ25", "FA20"]},
-    {"make": "Suzuki", "models": ["Swift", "Alto", "Celerio", "Vitara", "Grand Vitara", "Jimny", "SX4", "S-Cross", "Ertiga", "Baleno"], "engines": ["K10B", "K12M", "K14B", "M16A", "J20A", "J24B"]},
-    {"make": "Toyota", "models": ["Hilux", "Fortuner", "Land Cruiser", "Prado", "Corolla", "Yaris", "Prius", "RAV4", "4Runner", "FJ Cruiser", "Rush"], "engines": ["1KD-FTV", "2KD-FTV", "1GD-FTV", "2GD-FTV", "1TR-FE", "2TR-FE", "1GR-FE", "1ZZ-FE", "2ZR-FE", "1NZ-FE"]},
-    {"make": "Volkswagen", "models": ["Gol", "Voyage", "Polo", "Golf", "Jetta", "Vento", "Amarok", "Tiguan", "T-Cross", "Saveiro", "Fox", "Bora"], "engines": ["EA111 1.6", "EA211 1.6 MSI", "EA888 2.0 TSI", "2.0 TDI", "1.8 AP"]}
+    {
+      "make": "Audi",
+      "models": [
+        "A1",
+        "A3",
+        "A4",
+        "A5",
+        "A6",
+        "A7",
+        "Q2",
+        "Q3",
+        "Q5",
+        "Q7",
+        "Q8",
+        "TT"
+      ],
+      "engines": [
+        "1.4 TFSI",
+        "1.5 TFSI",
+        "1.8 TFSI",
+        "2.0 TFSI",
+        "3.0 TFSI",
+        "1.6 TDI",
+        "2.0 TDI",
+        "3.0 TDI"
+      ]
+    },
+    {
+      "make": "BMW",
+      "models": [
+        "Serie 1",
+        "Serie 2",
+        "Serie 3",
+        "Serie 4",
+        "Serie 5",
+        "X1",
+        "X2",
+        "X3",
+        "X4",
+        "X5",
+        "X6",
+        "M3",
+        "M4",
+        "Mini Cooper"
+      ],
+      "engines": [
+        "N46 2.0",
+        "N20 2.0 Turbo",
+        "B38 1.5 Turbo",
+        "B48 2.0 Turbo",
+        "B58 3.0 Turbo",
+        "N47 2.0 diésel",
+        "B47 2.0 diésel",
+        "N46",
+        "N20",
+        "B48",
+        "B58",
+        "N47"
+      ]
+    },
+    {
+      "make": "BYD",
+      "models": [
+        "F0",
+        "F3",
+        "Dolphin",
+        "Song Plus",
+        "Yuan Plus",
+        "Seal",
+        "Tang",
+        "Han",
+        "Song",
+        "Yuan"
+      ],
+      "engines": [
+        "Eléctrico",
+        "DM-i 1.5",
+        "1.0",
+        "1.5",
+        "DM-i"
+      ]
+    },
+    {
+      "make": "Chery",
+      "models": [
+        "QQ",
+        "Tiggo 2",
+        "Tiggo 3",
+        "Tiggo 4",
+        "Tiggo 7",
+        "Tiggo 8",
+        "Arrizo 5",
+        "Arrizo"
+      ],
+      "engines": [
+        "1.0",
+        "1.5",
+        "1.5 Turbo",
+        "1.6 Turbo",
+        "2.0 Turbo",
+        "1.1",
+        "1.6"
+      ]
+    },
+    {
+      "make": "Chevrolet",
+      "models": [
+        "Spark",
+        "Spark GT",
+        "Aveo",
+        "Aveo Emotion",
+        "Sail",
+        "Onix",
+        "Prisma",
+        "Cruze",
+        "Optra",
+        "Corsa",
+        "Chevy",
+        "Captiva",
+        "Tracker",
+        "Equinox",
+        "D-Max",
+        "LUV D-Max",
+        "Colorado",
+        "Trailblazer",
+        "N300",
+        "Silverado"
+      ],
+      "engines": [
+        "B10 1.0",
+        "1.2",
+        "1.4",
+        "1.6 16V",
+        "1.8",
+        "2.4 Ecotec",
+        "1.0 Turbo",
+        "1.2 Turbo",
+        "2.8 Duramax TD",
+        "3.0 TD",
+        "5.3 V8",
+        "B10",
+        "1.6",
+        "2.4"
+      ]
+    },
+    {
+      "make": "Citroën",
+      "models": [
+        "C3",
+        "C3 Aircross",
+        "C4",
+        "C4 Cactus",
+        "C-Elysée",
+        "Berlingo",
+        "Jumper",
+        "Jumpy",
+        "DS3",
+        "DS4"
+      ],
+      "engines": [
+        "TU3 1.4",
+        "TU5 1.6",
+        "EC5 1.6 16V",
+        "PureTech 1.2",
+        "THP 1.6 Turbo",
+        "1.6 HDi",
+        "BlueHDi 1.5",
+        "BlueHDi 2.0",
+        "TU3",
+        "EC5"
+      ]
+    },
+    {
+      "make": "Fiat",
+      "models": [
+        "Uno",
+        "Palio",
+        "Siena",
+        "Strada",
+        "Mobi",
+        "Argo",
+        "Cronos",
+        "Toro",
+        "Pulse",
+        "Fastback",
+        "Fiorino",
+        "Ducato"
+      ],
+      "engines": [
+        "Fire 1.0",
+        "Fire 1.4",
+        "1.3 Firefly",
+        "1.0 Turbo T200",
+        "1.3 Turbo T270",
+        "E.torQ 1.6",
+        "2.0 MultiJet diésel"
+      ]
+    },
+    {
+      "make": "Ford",
+      "models": [
+        "Fiesta",
+        "Focus",
+        "EcoSport",
+        "Escape",
+        "Explorer",
+        "Ranger",
+        "F-150",
+        "Fusion",
+        "Mustang",
+        "Bronco",
+        "Bronco Sport",
+        "Territory",
+        "Edge",
+        "Transit",
+        "Ka"
+      ],
+      "engines": [
+        "Zetec 1.6",
+        "Sigma 1.6",
+        "Duratec 2.0",
+        "EcoBoost 1.0",
+        "EcoBoost 1.5",
+        "EcoBoost 2.0",
+        "EcoBoost 2.3",
+        "EcoBoost 3.5 V6",
+        "Puma 2.2 TDCi",
+        "Puma 3.2 TDCi",
+        "Panther 2.0 TDCi",
+        "Coyote 5.0 V8",
+        "Zetec",
+        "EcoBoost"
+      ]
+    },
+    {
+      "make": "Great Wall",
+      "models": [
+        "Wingle 5",
+        "Wingle 7",
+        "Poer",
+        "Haval H6",
+        "Haval Jolion",
+        "Voleex C30",
+        "Wingle"
+      ],
+      "engines": [
+        "2.0 diésel GW4D20",
+        "2.8 TC",
+        "1.5 Turbo",
+        "2.0 Turbo",
+        "2.0 diésel",
+        "1.5"
+      ]
+    },
+    {
+      "make": "Honda",
+      "models": [
+        "Civic",
+        "City",
+        "Fit",
+        "Accord",
+        "CR-V",
+        "HR-V",
+        "WR-V",
+        "BR-V",
+        "Pilot",
+        "Odyssey"
+      ],
+      "engines": [
+        "L13 1.3",
+        "L15 1.5 i-VTEC",
+        "L15B7 1.5 Turbo",
+        "R18 1.8",
+        "R20 2.0",
+        "K20 2.0",
+        "K24 2.4",
+        "J35 3.5 V6",
+        "e:HEV 2.0 Híbrido",
+        "L15",
+        "R18",
+        "K20",
+        "K24"
+      ]
+    },
+    {
+      "make": "Hyundai",
+      "models": [
+        "i10",
+        "Grand i10",
+        "Accent",
+        "i25",
+        "Elantra",
+        "Tucson",
+        "Santa Fe",
+        "Creta",
+        "Creta Grand",
+        "Atos",
+        "Getz",
+        "H-1",
+        "Porter",
+        "Kona",
+        "Palisade",
+        "Venue",
+        "HB20",
+        "i20",
+        "i30",
+        "Sonata",
+        "Veloster",
+        "Veracruz",
+        "Terracan",
+        "Staria",
+        "Santa Cruz"
+      ],
+      "engines": [
+        "Kappa 1.0",
+        "Kappa 1.25",
+        "Gamma 1.4",
+        "Gamma 1.6",
+        "Nu 2.0",
+        "Theta 2.4",
+        "Smartstream 1.6",
+        "Smartstream 2.0",
+        "CRDi 1.6",
+        "CRDi 2.0",
+        "CRDi 2.2",
+        "D4CB 2.5 TCi",
+        "Epsilon 1.1",
+        "Kappa 1.2",
+        "Theta 2.0",
+        "Lambda 3.3",
+        "CRDi 2.5",
+        "D4CB"
+      ]
+    },
+    {
+      "make": "Isuzu",
+      "models": [
+        "D-Max",
+        "Trooper",
+        "Rodeo",
+        "mu-X"
+      ],
+      "engines": [
+        "4JJ1 3.0 TD",
+        "4JJ3 3.0 TD",
+        "4JA1 2.5 TD",
+        "4JK1 2.5 TD",
+        "RZ4E 1.9 TD",
+        "4JJ1",
+        "4JA1",
+        "4JK1"
+      ]
+    },
+    {
+      "make": "Jeep",
+      "models": [
+        "Wrangler",
+        "Cherokee",
+        "Grand Cherokee",
+        "Compass",
+        "Renegade",
+        "Commander"
+      ],
+      "engines": [
+        "3.6 Pentastar",
+        "2.4 Tigershark",
+        "1.3 Turbo T270",
+        "2.0 Turbo",
+        "3.0 EcoDiesel",
+        "4.0 L6",
+        "3.7",
+        "4.0"
+      ]
+    },
+    {
+      "make": "Kia",
+      "models": [
+        "Picanto",
+        "Rio",
+        "Cerato",
+        "Forte",
+        "Sportage",
+        "Sorento",
+        "Soluto",
+        "Stonic",
+        "Seltos",
+        "Sonet",
+        "Carnival",
+        "K3",
+        "K5",
+        "Soul",
+        "Carens",
+        "Niro",
+        "Telluride",
+        "Pregio",
+        "K2500",
+        "K2700"
+      ],
+      "engines": [
+        "Kappa 1.0",
+        "Kappa 1.25",
+        "Gamma 1.4",
+        "Gamma 1.6",
+        "Nu 2.0",
+        "Smartstream 1.5",
+        "Smartstream 2.0",
+        "CRDi 1.6 diésel",
+        "CRDi 2.0 diésel",
+        "CRDi 2.2 diésel",
+        "Theta 2.4",
+        "Lambda 3.3",
+        "CRDi 1.6",
+        "CRDi 2.0",
+        "CRDi 2.2"
+      ]
+    },
+    {
+      "make": "Mazda",
+      "models": [
+        "Mazda 2",
+        "Mazda 3",
+        "Mazda 6",
+        "CX-3",
+        "CX-30",
+        "CX-5",
+        "CX-50",
+        "CX-9",
+        "CX-90",
+        "BT-50",
+        "Allegro",
+        "323",
+        "MX-5 Miata",
+        "Mazda 5",
+        "CX-7",
+        "CX-60",
+        "B-Series",
+        "626"
+      ],
+      "engines": [
+        "Skyactiv-G 1.5",
+        "Skyactiv-G 2.0",
+        "Skyactiv-G 2.5",
+        "Skyactiv-G 2.5 Turbo",
+        "Skyactiv-D 2.2 diésel",
+        "MZR 1.6",
+        "MZR 2.0",
+        "WL 2.5 diésel",
+        "MZ-CD 3.0 TD",
+        "MZR 2.3",
+        "2.2 Skyactiv-D"
+      ]
+    },
+    {
+      "make": "Mercedes-Benz",
+      "models": [
+        "Clase A",
+        "Clase B",
+        "Clase C",
+        "Clase E",
+        "Clase S",
+        "CLA",
+        "GLA",
+        "GLB",
+        "GLC",
+        "GLE",
+        "GLS",
+        "Sprinter",
+        "Vito",
+        "CLS",
+        "Clase G",
+        "GLK",
+        "ML",
+        "Clase V",
+        "Citan",
+        "Viano"
+      ],
+      "engines": [
+        "M270 1.6/2.0",
+        "M274 2.0 Turbo",
+        "M264 2.0 Turbo",
+        "M256 3.0 Turbo",
+        "OM651 2.1 diésel",
+        "OM654 2.0 diésel",
+        "OM642 3.0 V6 diésel",
+        "M111",
+        "M271",
+        "M274",
+        "M264",
+        "M276",
+        "M278",
+        "OM611",
+        "OM646",
+        "OM651",
+        "OM642"
+      ]
+    },
+    {
+      "make": "Mitsubishi",
+      "models": [
+        "L200",
+        "Sportero",
+        "Montero",
+        "Montero Sport",
+        "Outlander",
+        "ASX",
+        "Eclipse Cross",
+        "Lancer",
+        "Mirage",
+        "Nativa",
+        "Xpander"
+      ],
+      "engines": [
+        "4D56 2.5 TD",
+        "4N15 2.4 MIVEC TD",
+        "4N16 2.4 TD",
+        "4M41 3.2 TD",
+        "4G63 2.0",
+        "4B11 2.0",
+        "4B12 2.4",
+        "4A91 1.5",
+        "1.5 Turbo 4B40",
+        "4D56",
+        "4M41",
+        "4N15",
+        "4G63",
+        "4B11"
+      ]
+    },
+    {
+      "make": "Nissan",
+      "models": [
+        "Frontier",
+        "NP300",
+        "Navara",
+        "Sentra",
+        "Versa",
+        "March",
+        "Tiida",
+        "X-Trail",
+        "Qashqai",
+        "Kicks",
+        "Pathfinder",
+        "Patrol",
+        "Murano",
+        "Almera",
+        "Magnite",
+        "V-Drive",
+        "Terrano",
+        "Urvan"
+      ],
+      "engines": [
+        "YD25 2.5 TD",
+        "YS23 2.3 TD bi-turbo",
+        "ZD30 3.0 TD",
+        "QD32 3.2 D",
+        "HR16DE 1.6",
+        "MR20DE 2.0",
+        "QR25DE 2.5",
+        "VQ40DE 4.0 V6",
+        "HR10DET 1.0 Turbo",
+        "KA24DE 2.4",
+        "YD25",
+        "YD22",
+        "ZD30",
+        "QD32",
+        "KA24DE",
+        "QR25DE",
+        "VQ40DE",
+        "HR16DE",
+        "MR20DE",
+        "HR15DE",
+        "QG16DE"
+      ]
+    },
+    {
+      "make": "Peugeot",
+      "models": [
+        "206",
+        "207",
+        "208",
+        "301",
+        "307",
+        "308",
+        "2008",
+        "3008",
+        "5008",
+        "Partner",
+        "Expert",
+        "Boxer"
+      ],
+      "engines": [
+        "TU3 1.4",
+        "TU5 1.6",
+        "EC5 1.6 16V",
+        "PureTech 1.2",
+        "EP6 1.6 THP Turbo",
+        "1.6 HDi",
+        "BlueHDi 1.5",
+        "BlueHDi 2.0",
+        "TU3",
+        "TU5",
+        "EC5",
+        "EP6"
+      ]
+    },
+    {
+      "make": "RAM",
+      "models": [
+        "700",
+        "1000",
+        "1500",
+        "2500",
+        "Rampage"
+      ],
+      "engines": [
+        "Firefly 1.3",
+        "1.4",
+        "2.0 Turbo Hurricane 4",
+        "2.0 MultiJet diésel",
+        "5.7 HEMI V8",
+        "6.7 Cummins TD",
+        "5.7 HEMI",
+        "6.7 Cummins",
+        "2.2"
+      ]
+    },
+    {
+      "make": "Renault",
+      "models": [
+        "Sandero",
+        "Sandero Stepway",
+        "Logan",
+        "Symbol",
+        "Clio",
+        "Twingo",
+        "Megane",
+        "Duster",
+        "Duster Oroch",
+        "Kangoo",
+        "Kwid",
+        "Captur",
+        "Koleos",
+        "Fluence",
+        "Alaskan",
+        "Kardian",
+        "Arkana",
+        "Master",
+        "Megane II",
+        "Megane III",
+        "Scenic",
+        "Trafic"
+      ],
+      "engines": [
+        "D4F 1.2 16V",
+        "K7M 1.6 8V",
+        "K4M 1.6 16V",
+        "H4M 1.6 16V",
+        "F4R 2.0 16V",
+        "SCe 1.0 12V",
+        "TCe 1.3 Turbo",
+        "TCe 1.0 Turbo",
+        "K9K 1.5 dCi",
+        "M9T 2.3 dCi",
+        "H5H 1.3 TCe",
+        "F4RT 2.0T",
+        "SCe 1.0",
+        "M9R 2.0 dCi"
+      ]
+    },
+    {
+      "make": "Subaru",
+      "models": [
+        "Impreza",
+        "XV",
+        "Crosstrek",
+        "Forester",
+        "Legacy",
+        "Outback",
+        "WRX",
+        "BRZ",
+        "Evoltis",
+        "Tribeca",
+        "WRX STI",
+        "Baja",
+        "Justy",
+        "Levorg"
+      ],
+      "engines": [
+        "FB16 1.6",
+        "FB20 2.0",
+        "FB25 2.5",
+        "FA20 2.0 DIT Turbo",
+        "FA24 2.4 Turbo",
+        "EJ20 2.0",
+        "EJ25 2.5",
+        "EE20 2.0 Boxer diésel",
+        "FB16",
+        "FB20",
+        "FB25",
+        "EJ15",
+        "EJ16",
+        "EJ20",
+        "EJ25",
+        "FA20",
+        "FA24",
+        "EE20 diésel"
+      ]
+    },
+    {
+      "make": "Suzuki",
+      "models": [
+        "Swift",
+        "Alto",
+        "Celerio",
+        "Vitara",
+        "Grand Vitara",
+        "Jimny",
+        "SX4",
+        "S-Cross",
+        "Ertiga",
+        "Baleno",
+        "Spresso",
+        "Ignis",
+        "XL7",
+        "Dzire",
+        "Swift Dzire",
+        "Ciaz",
+        "Wagon R",
+        "APV",
+        "Carry"
+      ],
+      "engines": [
+        "K10B 1.0",
+        "K10C 1.0 Boosterjet Turbo",
+        "K12M 1.2",
+        "K12N 1.2 Dualjet",
+        "K14B 1.4",
+        "K14C 1.4 Boosterjet Turbo",
+        "M16A 1.6",
+        "J20A 2.0",
+        "J24B 2.4",
+        "F8D",
+        "K10B",
+        "K12M",
+        "K12N",
+        "K14B",
+        "K14C Boosterjet",
+        "M15A",
+        "M16A",
+        "J20A",
+        "J24B"
+      ]
+    },
+    {
+      "make": "Toyota",
+      "models": [
+        "Hilux",
+        "Fortuner",
+        "Land Cruiser",
+        "Prado",
+        "Corolla",
+        "Corolla Cross",
+        "Yaris",
+        "Yaris Cross",
+        "Prius",
+        "RAV4",
+        "4Runner",
+        "FJ Cruiser",
+        "Rush",
+        "Tacoma",
+        "Tundra",
+        "Camry",
+        "Hiace",
+        "Etios",
+        "Raize",
+        "Land Cruiser Prado",
+        "Avanza",
+        "Innova",
+        "Highlander",
+        "Agya"
+      ],
+      "engines": [
+        "1KD-FTV 3.0 TD",
+        "2KD-FTV 2.5 TD",
+        "1GD-FTV 2.8 TD",
+        "2GD-FTV 2.4 TD",
+        "1TR-FE 2.0",
+        "2TR-FE 2.7",
+        "1GR-FE 4.0 V6",
+        "1ZZ-FE 1.8",
+        "2ZR-FE 1.8",
+        "2ZR-FXE 1.8 Híbrido",
+        "1NZ-FE 1.5",
+        "2NR-FE 1.5",
+        "M15A-FKS 1.5",
+        "WA-VE 1.2",
+        "1KR-FE",
+        "1NZ-FE",
+        "2NR-FE",
+        "1ZZ-FE",
+        "2ZR-FE",
+        "2AR-FE",
+        "1TR-FE",
+        "2TR-FE",
+        "1GR-FE",
+        "2GR-FE",
+        "1KD-FTV",
+        "2KD-FTV",
+        "1GD-FTV",
+        "2GD-FTV",
+        "2.5 Hybrid"
+      ]
+    },
+    {
+      "make": "Volkswagen",
+      "models": [
+        "Gol",
+        "Voyage",
+        "Polo",
+        "Virtus",
+        "Golf",
+        "Jetta",
+        "Vento",
+        "Nivus",
+        "Taos",
+        "T-Cross",
+        "Tiguan",
+        "Amarok",
+        "Saveiro",
+        "Fox",
+        "Bora",
+        "Passat",
+        "Touareg",
+        "Tera"
+      ],
+      "engines": [
+        "EA111 1.6 8V",
+        "EA211 1.6 MSI 16V",
+        "EA211 1.0 TSI (170/200 TSI)",
+        "EA211 1.4 TSI (250 TSI)",
+        "EA888 2.0 TSI (350 TSI)",
+        "2.0 TDI mono/bi-turbo",
+        "3.0 V6 TDI",
+        "1.8 AP",
+        "EA111 1.6",
+        "EA211 1.6 MSI",
+        "EA888 2.0 TSI",
+        "2.0 TDI"
+      ]
+    },
+    {
+      "make": "Changan",
+      "models": [
+        "Alsvin",
+        "CS15",
+        "CS35",
+        "CS55",
+        "CS75",
+        "Uni-T",
+        "Hunter"
+      ],
+      "engines": [
+        "1.4",
+        "1.5",
+        "1.6",
+        "BlueCore 1.5T"
+      ]
+    },
+    {
+      "make": "Dodge",
+      "models": [
+        "Journey",
+        "Durango",
+        "Dart",
+        "Caliber",
+        "Grand Caravan",
+        "Neon"
+      ],
+      "engines": [
+        "2.0",
+        "2.4",
+        "3.6 Pentastar",
+        "5.7 HEMI"
+      ]
+    },
+    {
+      "make": "Foton",
+      "models": [
+        "Tunland",
+        "Gratour",
+        "View",
+        "Aumark"
+      ],
+      "engines": [
+        "2.0",
+        "2.8 Cummins",
+        "2.8 diésel"
+      ]
+    },
+    {
+      "make": "Haval",
+      "models": [
+        "H1",
+        "H2",
+        "H2S",
+        "H6",
+        "H6 GT",
+        "H9",
+        "Jolion",
+        "Dargo"
+      ],
+      "engines": [
+        "1.5T",
+        "2.0T",
+        "2.0 diésel"
+      ]
+    },
+    {
+      "make": "JAC",
+      "models": [
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "JS2",
+        "JS4",
+        "T6",
+        "T8",
+        "Sunray"
+      ],
+      "engines": [
+        "1.5",
+        "1.6",
+        "2.0",
+        "2.0 CTI"
+      ]
+    },
+    {
+      "make": "Lexus",
+      "models": [
+        "IS",
+        "ES",
+        "GS",
+        "LS",
+        "UX",
+        "NX",
+        "RX",
+        "GX",
+        "LX"
+      ],
+      "engines": [
+        "2.0T",
+        "2.5",
+        "3.5 V6",
+        "híbrido"
+      ]
+    },
+    {
+      "make": "MG",
+      "models": [
+        "MG 3",
+        "MG 5",
+        "MG 6",
+        "ZS",
+        "HS",
+        "RX5",
+        "Marvel R"
+      ],
+      "engines": [
+        "1.5",
+        "1.5T",
+        "2.0T",
+        "Eléctrico"
+      ]
+    },
+    {
+      "make": "Opel",
+      "models": [
+        "Corsa",
+        "Astra",
+        "Vectra",
+        "Zafira",
+        "Meriva",
+        "Mokka",
+        "Insignia"
+      ],
+      "engines": [
+        "1.4",
+        "1.6",
+        "1.8",
+        "1.7 CDTI",
+        "2.0 CDTI"
+      ]
+    },
+    {
+      "make": "SEAT",
+      "models": [
+        "Ibiza",
+        "Leon",
+        "Toledo",
+        "Arona",
+        "Ateca"
+      ],
+      "engines": [
+        "1.0 TSI",
+        "1.2 TSI",
+        "1.4 TSI",
+        "1.6",
+        "2.0 TDI"
+      ]
+    },
+    {
+      "make": "Skoda",
+      "models": [
+        "Fabia",
+        "Octavia",
+        "Superb",
+        "Kamiq",
+        "Karoq",
+        "Kodiaq"
+      ],
+      "engines": [
+        "1.0 TSI",
+        "1.4 TSI",
+        "1.5 TSI",
+        "1.6 TDI",
+        "2.0 TDI"
+      ]
+    },
+    {
+      "make": "Volvo",
+      "models": [
+        "S40",
+        "S60",
+        "S80",
+        "S90",
+        "V40",
+        "V60",
+        "V70",
+        "XC40",
+        "XC60",
+        "XC70",
+        "XC90"
+      ],
+      "engines": [
+        "2.0T",
+        "2.5T",
+        "T5",
+        "T6",
+        "D4",
+        "D5"
+      ]
+    }
   ],
   "rules": [
-    {"make": "Subaru", "from": 2008, "protocols": ["6"], "confidence": "alta", "note": "Subaru usa CAN 11 bit / 500 kbps desde 2008 (motores FB, FA y EJ recientes)."},
-    {"make": "Subaru", "from": 1996, "to": 2007, "protocols": ["3", "5", "4", "6"], "confidence": "media", "note": "Subaru anteriores a 2008 usan ISO 9141-2; algunos 2005-2007 ya traen CAN."},
-
-    {"make": "Renault|Dacia", "model": "Sandero|Logan|Stepway|Symbol|Duster|Kangoo|Clio|Twingo", "from": 2002, "to": 2016, "protocols": ["5", "4", "6", "3"], "confidence": "media", "note": "Plataforma con motores K7M 8V / K4M 16V / D4F: la ECU de motor suele responder por ISO 14230-4 KWP de inicio rápido (K-Line, pin 7). La ECU Renault no tiene MAF: el consumo se estima con MAP y la cilindrada."},
-    {"make": "Renault|Dacia", "model": "Sandero|Logan|Stepway|Duster|Oroch|Kwid|Captur|Koleos|Alaskan", "from": 2017, "protocols": ["6", "5"], "confidence": "media", "note": "Segunda generación de la plataforma: CAN 11 bit / 500 kbps."},
-    {"make": "Renault|Dacia", "from": 2008, "protocols": ["6", "5", "4"], "confidence": "media"},
-    {"make": "Renault|Dacia", "to": 2007, "protocols": ["5", "4", "3"], "confidence": "baja"},
-
-    {"make": "Nissan", "model": "Frontier|NP300|Navara|D22|D40|Pathfinder|X-Trail|Patrol|Terrano", "fuel": "diesel", "from": 1998, "to": 2015, "protocols": ["4", "5", "3", "6"], "slowEcu": true, "confidence": "media", "note": "Motores diésel YD25 / YD22 / ZD30 / QD32: la ECU suele usar ISO 14230-4 KWP con inicio lento (5 baudios) y responde lento. En algunas versiones para Latinoamérica la ECU solo habla el protocolo propio de Nissan (Consult) y no responde a OBD-II genérico; en ese caso ningún ELM327 genérico podrá leerla."},
-    {"make": "Nissan", "model": "Frontier|NP300|Navara", "from": 2016, "protocols": ["6", "8"], "confidence": "alta", "note": "Nueva generación (D23): CAN 11 bit / 500 kbps, también en diésel YS23 / YD25 Euro V."},
-    {"make": "Nissan", "engine": "YD25|YD22|ZD30|QD32|TD27", "to": 2015, "protocols": ["4", "5", "3", "6"], "slowEcu": true, "confidence": "media", "note": "Diésel Nissan con K-Line: inicio lento y ECU lenta."},
-    {"make": "Nissan", "from": 2008, "protocols": ["6", "5"], "confidence": "alta"},
-    {"make": "Nissan", "from": 2001, "to": 2007, "protocols": ["3", "5", "4", "6"], "confidence": "media", "note": "Nissan 1996-2004 usaba ISO 9141-2; 2005-2007 mezcla KWP y CAN."},
-
-    {"make": "Chevrolet|GMC|Pontiac|Buick|Cadillac", "market": "us", "to": 2007, "protocols": ["2", "6"], "confidence": "alta", "note": "GM en EE. UU. usó SAE J1850 VPW hasta 2007."},
-    {"make": "Chevrolet", "model": "Spark|Aveo|Optra|Matiz|Sail|Corsa|Chevy|Captiva|Lacetti|Esteem|Vivant", "from": 2003, "to": 2012, "protocols": ["5", "3", "6", "4"], "confidence": "baja", "note": "Modelos de origen Daewoo/Opel/SAIC vendidos en Latinoamérica: K-Line (KWP o ISO 9141) en la mayoría; algunos ya tienen CAN."},
-    {"make": "Chevrolet", "model": "D-Max|LUV", "fuel": "diesel", "to": 2013, "protocols": ["5", "4", "3", "6"], "slowEcu": true, "confidence": "baja", "note": "D-Max diésel de primera generación: K-Line; algunas versiones para Latinoamérica no cumplen OBD-II genérico."},
-    {"make": "Chevrolet", "from": 2010, "protocols": ["6", "5"], "confidence": "media"},
-
-    {"make": "Ford|Lincoln|Mercury", "market": "us", "to": 2007, "protocols": ["1", "6"], "confidence": "alta", "note": "Ford en EE. UU. usó SAE J1850 PWM hasta 2004-2007."},
-    {"make": "Ford", "model": "Ranger", "fuel": "diesel", "from": 2012, "protocols": ["6"], "confidence": "alta"},
-    {"make": "Ford", "from": 2008, "protocols": ["6", "5"], "confidence": "alta"},
-    {"make": "Ford", "to": 2007, "protocols": ["5", "3", "1", "6"], "confidence": "baja"},
-
-    {"make": "Toyota", "model": "Hilux|Fortuner|Land Cruiser|Prado|Hiace", "fuel": "diesel", "from": 2005, "to": 2015, "protocols": ["5", "4", "6", "3"], "slowEcu": true, "confidence": "baja", "note": "Diésel 1KD / 2KD: varía por país. Algunas versiones para Latinoamérica no responden a OBD-II genérico (solo protocolo Toyota)."},
-    {"make": "Toyota", "model": "Hilux|Fortuner", "fuel": "diesel", "from": 2016, "protocols": ["6"], "confidence": "media", "note": "Motores GD: CAN."},
-    {"make": "Toyota|Lexus", "fuel": "hibrido", "from": 2004, "protocols": ["6"], "confidence": "media"},
-    {"make": "Toyota|Lexus", "from": 2008, "protocols": ["6", "5"], "confidence": "alta"},
-    {"make": "Toyota|Lexus", "to": 2007, "protocols": ["3", "5", "4", "6"], "confidence": "media"},
-
-    {"make": "Mazda", "model": "BT-50", "fuel": "diesel", "to": 2011, "protocols": ["5", "4", "6"], "slowEcu": true, "confidence": "baja"},
-    {"make": "Mazda", "from": 2006, "protocols": ["6"], "confidence": "alta"},
-    {"make": "Mazda", "to": 2005, "protocols": ["3", "5", "6"], "confidence": "media"},
-
-    {"make": "Hyundai|Kia", "fuel": "diesel", "from": 2004, "to": 2010, "protocols": ["5", "6", "4"], "confidence": "media", "note": "Diésel CRDi: muchos usan KWP rápido."},
-    {"make": "Hyundai|Kia", "from": 2008, "protocols": ["6", "5"], "confidence": "alta"},
-    {"make": "Hyundai|Kia", "to": 2007, "protocols": ["5", "3", "4", "6"], "confidence": "media"},
-
-    {"make": "Volkswagen|Audi|Seat|Skoda", "from": 2005, "protocols": ["6", "5"], "confidence": "alta"},
-    {"make": "Volkswagen", "model": "Gol|Voyage|Saveiro|Fox|Parati", "to": 2012, "protocols": ["5", "3", "6"], "confidence": "media", "note": "VW fabricados en Brasil/Argentina usaron KWP en motores AP y EA111."},
-    {"make": "Volkswagen|Audi|Seat|Skoda", "to": 2004, "protocols": ["5", "4", "3"], "confidence": "media"},
-
-    {"make": "Peugeot|Citroën|Citroen|DS", "from": 2005, "protocols": ["6", "5"], "confidence": "media"},
-    {"make": "Peugeot|Citroën|Citroen", "to": 2004, "protocols": ["5", "3", "4"], "confidence": "media"},
-
-    {"make": "Honda|Acura", "from": 2006, "protocols": ["6"], "confidence": "alta"},
-    {"make": "Honda|Acura", "to": 2005, "protocols": ["3", "5", "6"], "confidence": "media"},
-
-    {"make": "Mitsubishi", "model": "L200|Montero|Pajero|Nativa", "fuel": "diesel", "to": 2015, "protocols": ["5", "4", "6", "3"], "slowEcu": true, "confidence": "baja", "note": "Diésel 4D56 / 4M41: K-Line; algunas versiones para Latinoamérica no cumplen OBD-II genérico."},
-    {"make": "Mitsubishi", "from": 2008, "protocols": ["6", "5"], "confidence": "media"},
-    {"make": "Mitsubishi", "to": 2007, "protocols": ["3", "5", "4"], "confidence": "media"},
-
-    {"make": "Suzuki", "from": 2010, "protocols": ["6", "5"], "confidence": "media"},
-    {"make": "Suzuki", "to": 2009, "protocols": ["5", "3", "4", "6"], "confidence": "media"},
-
-    {"make": "Isuzu", "fuel": "diesel", "to": 2013, "protocols": ["5", "4", "3", "6"], "slowEcu": true, "confidence": "baja"},
-    {"make": "Isuzu", "from": 2014, "protocols": ["6"], "confidence": "media"},
-
-    {"make": "Jeep|Chrysler|Dodge|RAM", "from": 2008, "protocols": ["6"], "confidence": "alta"},
-    {"make": "Jeep|Chrysler|Dodge|RAM", "to": 2007, "protocols": ["2", "3", "6"], "confidence": "media", "note": "Chrysler usó J1850 VPW e ISO 9141-2 antes de 2008."},
-
-    {"make": "Mercedes-Benz", "from": 2008, "protocols": ["6", "7"], "confidence": "alta"},
-    {"make": "Mercedes-Benz", "to": 2007, "protocols": ["5", "4", "3", "6"], "confidence": "media"},
-    {"make": "BMW|Mini", "from": 2008, "protocols": ["6"], "confidence": "alta"},
-    {"make": "BMW|Mini", "to": 2007, "protocols": ["3", "5", "4"], "confidence": "media"},
-    {"make": "Fiat", "from": 2010, "protocols": ["6", "5"], "confidence": "media"},
-    {"make": "Fiat", "to": 2009, "protocols": ["5", "3", "4"], "confidence": "media"},
-    {"make": "Great Wall|Chery|JAC|Geely|BYD|MG|Changan|DFSK|JMC|Foton", "from": 2012, "protocols": ["6", "5", "4"], "confidence": "baja", "note": "Marcas chinas: la mayoría usa CAN desde 2012; algunos diésel no responden a OBD-II genérico."},
-    {"make": "Great Wall|Chery|JAC|Geely|BYD|MG|Changan|DFSK|JMC|Foton", "to": 2011, "protocols": ["5", "4", "3", "6"], "confidence": "baja"}
+    {
+      "make": "Subaru",
+      "from": 2008,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "alta",
+      "note": "Subaru usa CAN 11 bit / 500 kbps en prácticamente todos los modelos desde 2008 (motores FB, FA y EJ modernos)."
+    },
+    {
+      "make": "Subaru",
+      "from": 1996,
+      "to": 2007,
+      "protocols": [
+        "3",
+        "5",
+        "4",
+        "6"
+      ],
+      "confidence": "media",
+      "note": "Subaru anteriores a 2008 usan ISO 9141-2; algunos 2005-2007 de transición ya incorporan CAN."
+    },
+    {
+      "make": "Renault|Dacia",
+      "model": "Sandero|Logan|Stepway|Symbol|Duster|Kangoo|Clio|Twingo",
+      "from": 2002,
+      "to": 2016,
+      "protocols": [
+        "5",
+        "4",
+        "6",
+        "3"
+      ],
+      "confidence": "media",
+      "note": "Plataforma con motores K7M 8V / K4M 16V / D4F: la ECU de motor suele responder por ISO 14230-4 KWP de inicio rápido (K-Line, pin 7). La ECU Renault no tiene MAF: el consumo se estima con MAP y la cilindrada."
+    },
+    {
+      "make": "Renault|Dacia",
+      "model": "Sandero|Logan|Stepway|Duster|Oroch|Kwid|Captur|Koleos|Alaskan|Kardian|Arkana",
+      "from": 2017,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta",
+      "note": "Segunda y tercera generación de la plataforma: bus CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Renault|Dacia",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "5",
+        "4"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Renault|Dacia",
+      "to": 2007,
+      "protocols": [
+        "5",
+        "4",
+        "3"
+      ],
+      "confidence": "baja"
+    },
+    {
+      "make": "Nissan",
+      "model": "Frontier|NP300|Navara|D22|D40|Pathfinder|X-Trail|Patrol|Terrano",
+      "fuel": "diesel",
+      "from": 1998,
+      "to": 2015,
+      "protocols": [
+        "4",
+        "5",
+        "3",
+        "6"
+      ],
+      "slowEcu": true,
+      "confidence": "media",
+      "note": "Motores diésel YD25 / YD22 / ZD30 / QD32: la ECU suele usar ISO 14230-4 KWP con inicio lento (5 baudios) y responde con cierta demora. En algunas versiones para Latinoamérica la ECU solo habla el protocolo propio de Nissan (Consult) y no responde a OBD-II genérico."
+    },
+    {
+      "make": "Nissan",
+      "model": "Frontier|NP300|Navara",
+      "from": 2016,
+      "protocols": [
+        "6",
+        "8"
+      ],
+      "confidence": "alta",
+      "note": "Generación D23: CAN 11 bit / 500 kbps, compatible en diésel YS23 y YD25 Euro V."
+    },
+    {
+      "make": "Nissan",
+      "engine": "YD25|YD22|ZD30|QD32|TD27",
+      "to": 2015,
+      "protocols": [
+        "4",
+        "5",
+        "3",
+        "6"
+      ],
+      "slowEcu": true,
+      "confidence": "media",
+      "note": "Diésel Nissan con K-Line: inicio lento (ATSTFF) y ECU pausada."
+    },
+    {
+      "make": "Nissan",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta"
+    },
+    {
+      "make": "Nissan",
+      "from": 2001,
+      "to": 2007,
+      "protocols": [
+        "3",
+        "5",
+        "4",
+        "6"
+      ],
+      "confidence": "media",
+      "note": "Nissan 1996-2004 usaba ISO 9141-2; 2005-2007 mezcla KWP y CAN."
+    },
+    {
+      "make": "Toyota",
+      "model": "Hilux|Fortuner|Land Cruiser|Prado|Hiace",
+      "fuel": "diesel",
+      "from": 2005,
+      "to": 2015,
+      "protocols": [
+        "5",
+        "4",
+        "6",
+        "3"
+      ],
+      "slowEcu": true,
+      "confidence": "media",
+      "note": "Diésel 1KD / 2KD: en algunas versiones para Latinoamérica o mercados emergentes la ECU solo responde a protocolo propio de Toyota. Si no responde en KWP, prueba el escaneo completo."
+    },
+    {
+      "make": "Toyota",
+      "model": "Hilux|Fortuner|Land Cruiser|Prado",
+      "fuel": "diesel",
+      "from": 2016,
+      "protocols": [
+        "6",
+        "8"
+      ],
+      "confidence": "alta",
+      "note": "Motores 1GD / 2GD / V6 diésel: bus CAN 11 bit / 500 kbps nativo."
+    },
+    {
+      "make": "Toyota|Lexus",
+      "fuel": "hibrido",
+      "from": 2004,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "alta",
+      "note": "Modelos híbridos Toyota (Prius, Corolla Híbrido, RAV4 Híbrido): bus CAN 11/500."
+    },
+    {
+      "make": "Toyota|Lexus",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta"
+    },
+    {
+      "make": "Toyota|Lexus",
+      "to": 2007,
+      "protocols": [
+        "3",
+        "5",
+        "4",
+        "6"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Ford|Lincoln|Mercury",
+      "market": "us",
+      "to": 2007,
+      "protocols": [
+        "1",
+        "6"
+      ],
+      "confidence": "alta",
+      "note": "Ford en EE. UU. usó SAE J1850 PWM hasta 2004-2007."
+    },
+    {
+      "make": "Ford",
+      "model": "Ranger",
+      "fuel": "diesel",
+      "from": 2012,
+      "protocols": [
+        "6",
+        "7"
+      ],
+      "confidence": "alta",
+      "note": "Ranger T6 (motores Puma 2.2 / 3.2 y Panther 2.0): bus CAN 11 bit 500 kbps."
+    },
+    {
+      "make": "Ford",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta"
+    },
+    {
+      "make": "Ford",
+      "to": 2007,
+      "protocols": [
+        "5",
+        "3",
+        "1",
+        "6"
+      ],
+      "confidence": "baja"
+    },
+    {
+      "make": "Kia",
+      "fuel": "diesel",
+      "from": 2004,
+      "to": 2010,
+      "protocols": [
+        "5",
+        "6",
+        "4"
+      ],
+      "confidence": "media",
+      "note": "Kia diésel CRDi: muchos usan ISO 14230-4 KWP rápido."
+    },
+    {
+      "make": "Kia",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta",
+      "note": "Kia 2008 en adelante: estándar CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Kia",
+      "to": 2007,
+      "protocols": [
+        "5",
+        "3",
+        "4",
+        "6"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Mazda",
+      "model": "BT-50",
+      "fuel": "diesel",
+      "to": 2011,
+      "protocols": [
+        "5",
+        "4",
+        "6"
+      ],
+      "slowEcu": true,
+      "confidence": "media",
+      "note": "BT-50 diésel 2.5 / 3.0 primera generación: K-Line."
+    },
+    {
+      "make": "Mazda",
+      "from": 2006,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "alta",
+      "note": "Mazda adoptó CAN 11 bit / 500 kbps muy temprano (generaciones Skyactiv y MZR)."
+    },
+    {
+      "make": "Mazda",
+      "to": 2005,
+      "protocols": [
+        "3",
+        "5",
+        "6"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Hyundai",
+      "fuel": "diesel",
+      "from": 2004,
+      "to": 2010,
+      "protocols": [
+        "5",
+        "6",
+        "4"
+      ],
+      "confidence": "media",
+      "note": "Hyundai CRDi: ISO 14230-4 KWP rápido."
+    },
+    {
+      "make": "Hyundai",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta",
+      "note": "Hyundai 2008 en adelante: CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Hyundai",
+      "to": 2007,
+      "protocols": [
+        "5",
+        "3",
+        "4",
+        "6"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Suzuki",
+      "from": 2010,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta",
+      "note": "Suzuki moderno (Swift, Vitara, Jimny): CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Suzuki",
+      "to": 2009,
+      "protocols": [
+        "5",
+        "3",
+        "4",
+        "6"
+      ],
+      "confidence": "media",
+      "note": "Suzuki anteriores a 2010: KWP rápido o ISO 9141-2."
+    },
+    {
+      "make": "Citroën|Citroen|Peugeot|DS",
+      "from": 2005,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta",
+      "note": "Grupo PSA: bus CAN 11 bit / 500 kbps en casi todos los modelos desde 2005."
+    },
+    {
+      "make": "Citroën|Citroen|Peugeot|DS",
+      "to": 2004,
+      "protocols": [
+        "5",
+        "3",
+        "4"
+      ],
+      "confidence": "media",
+      "note": "Modelos PSA antiguos: ISO 14230-4 KWP o ISO 9141-2."
+    },
+    {
+      "make": "Mercedes-Benz|Mercedez",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "7"
+      ],
+      "confidence": "alta",
+      "note": "Mercedes-Benz moderno: CAN 11 bit y 29 bit a 500 kbps."
+    },
+    {
+      "make": "Mercedes-Benz|Mercedez",
+      "to": 2007,
+      "protocols": [
+        "5",
+        "4",
+        "3",
+        "6"
+      ],
+      "confidence": "media",
+      "note": "Mercedes anteriores a 2008 con conector OBD de 16 pines: ISO 14230-4 KWP o ISO 9141-2."
+    },
+    {
+      "make": "BMW|BWM|Mini",
+      "from": 2008,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "alta",
+      "note": "BMW y Mini desde 2008: CAN 11 bit / 500 kbps estándar en pin 6/14."
+    },
+    {
+      "make": "BMW|BWM|Mini",
+      "to": 2007,
+      "protocols": [
+        "3",
+        "5",
+        "4",
+        "6"
+      ],
+      "confidence": "media",
+      "note": "BMW 2001-2007 (E46, E39, E90 inicial): ISO 9141-2 o KWP rápido en pin 7."
+    },
+    {
+      "make": "Audi",
+      "from": 2005,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta",
+      "note": "Audi moderno (plataformas A4 B7/B8, A3 8P/8V, etc.): CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Audi",
+      "to": 2004,
+      "protocols": [
+        "5",
+        "4",
+        "3"
+      ],
+      "confidence": "media",
+      "note": "Audi anteriores a 2005: KWP rápido / KWP lento por K-Line."
+    },
+    {
+      "make": "Volkswagen",
+      "model": "Gol|Voyage|Saveiro|Fox|Parati",
+      "to": 2012,
+      "protocols": [
+        "5",
+        "3",
+        "6"
+      ],
+      "confidence": "media",
+      "note": "VW Gol/Voyage fabricados en Brasil: ISO 14230-4 KWP rápido en motores EA111 y AP."
+    },
+    {
+      "make": "Volkswagen",
+      "from": 2005,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta",
+      "note": "Volkswagen desde 2005 (Golf, Jetta, Tiguan, Polo, Amarok): CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Volkswagen",
+      "to": 2004,
+      "protocols": [
+        "5",
+        "4",
+        "3"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Mitsubishi",
+      "model": "L200|Sportero|Montero|Pajero|Nativa",
+      "fuel": "diesel",
+      "to": 2015,
+      "protocols": [
+        "5",
+        "4",
+        "6",
+        "3"
+      ],
+      "slowEcu": true,
+      "confidence": "media",
+      "note": "Diésel 4D56 / 4M41: K-Line; en algunas versiones para Latinoamérica la ECU no cumple OBD-II genérico."
+    },
+    {
+      "make": "Mitsubishi",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "media",
+      "note": "Mitsubishi moderno: CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Mitsubishi",
+      "to": 2007,
+      "protocols": [
+        "3",
+        "5",
+        "4"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Honda|Acura",
+      "from": 2006,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "alta",
+      "note": "Honda desde 2006 (Civic 8va+, CR-V 3ra+, Fit 2da+): CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Honda|Acura",
+      "to": 2005,
+      "protocols": [
+        "3",
+        "5",
+        "6"
+      ],
+      "confidence": "media",
+      "note": "Honda anteriores a 2006: ISO 9141-2."
+    },
+    {
+      "make": "Chevrolet|GMC|Pontiac|Buick|Cadillac",
+      "market": "us",
+      "to": 2007,
+      "protocols": [
+        "2",
+        "6"
+      ],
+      "confidence": "alta",
+      "note": "GM en EE. UU. usó SAE J1850 VPW hasta 2007."
+    },
+    {
+      "make": "Chevrolet",
+      "model": "Spark|Aveo|Optra|Matiz|Sail|Corsa|Chevy|Captiva|Lacetti|Esteem|Vivant",
+      "from": 2003,
+      "to": 2012,
+      "protocols": [
+        "5",
+        "3",
+        "6",
+        "4"
+      ],
+      "confidence": "media",
+      "note": "Modelos Daewoo/Opel/SAIC vendidos en Latinoamérica: K-Line (KWP o ISO 9141)."
+    },
+    {
+      "make": "Chevrolet",
+      "model": "D-Max|LUV",
+      "fuel": "diesel",
+      "to": 2013,
+      "protocols": [
+        "5",
+        "4",
+        "3",
+        "6"
+      ],
+      "slowEcu": true,
+      "confidence": "media",
+      "note": "D-Max diésel de primera generación: K-Line."
+    },
+    {
+      "make": "Chevrolet",
+      "from": 2010,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Fiat",
+      "from": 2010,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "media",
+      "note": "Fiat desde 2010: CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Fiat",
+      "to": 2009,
+      "protocols": [
+        "5",
+        "3",
+        "4"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Jeep|Chrysler|Dodge|RAM",
+      "from": 2008,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "alta",
+      "note": "Chrysler/Jeep/RAM desde 2008: CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Jeep|Chrysler|Dodge|RAM",
+      "to": 2007,
+      "protocols": [
+        "2",
+        "3",
+        "6"
+      ],
+      "confidence": "media",
+      "note": "Chrysler usó J1850 VPW e ISO 9141-2 antes de 2008."
+    },
+    {
+      "make": "Great Wall|Chery|JAC|Geely|BYD|MG|Changan|DFSK|JMC|Foton",
+      "from": 2012,
+      "protocols": [
+        "6",
+        "5",
+        "4"
+      ],
+      "confidence": "media",
+      "note": "Marcas chinas: la mayoría usa CAN desde 2012."
+    },
+    {
+      "make": "Great Wall|Chery|JAC|Geely|BYD|MG|Changan|DFSK|JMC|Foton",
+      "to": 2011,
+      "protocols": [
+        "5",
+        "4",
+        "3",
+        "6"
+      ],
+      "confidence": "baja"
+    },
+    {
+      "make": "Renault|Dacia",
+      "model": "Sandero|Logan|Stepway|Duster|Oroch|Kwid|Captur|Koleos|Alaskan",
+      "from": 2017,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "media",
+      "note": "Segunda generación de la plataforma: CAN 11 bit / 500 kbps."
+    },
+    {
+      "make": "Toyota",
+      "model": "Hilux|Fortuner",
+      "fuel": "diesel",
+      "from": 2016,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "media",
+      "note": "Motores GD: CAN."
+    },
+    {
+      "make": "Hyundai|Kia",
+      "fuel": "diesel",
+      "from": 2004,
+      "to": 2010,
+      "protocols": [
+        "5",
+        "6",
+        "4"
+      ],
+      "confidence": "media",
+      "note": "Diésel CRDi: muchos usan KWP rápido."
+    },
+    {
+      "make": "Hyundai|Kia",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta"
+    },
+    {
+      "make": "Hyundai|Kia",
+      "to": 2007,
+      "protocols": [
+        "5",
+        "3",
+        "4",
+        "6"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Volkswagen|Audi|Seat|Skoda",
+      "from": 2005,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "alta"
+    },
+    {
+      "make": "Volkswagen|Audi|Seat|Skoda",
+      "to": 2004,
+      "protocols": [
+        "5",
+        "4",
+        "3"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Peugeot|Citroën|Citroen|DS",
+      "from": 2005,
+      "protocols": [
+        "6",
+        "5"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Peugeot|Citroën|Citroen",
+      "to": 2004,
+      "protocols": [
+        "5",
+        "3",
+        "4"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Mitsubishi",
+      "model": "L200|Montero|Pajero|Nativa",
+      "fuel": "diesel",
+      "to": 2015,
+      "protocols": [
+        "5",
+        "4",
+        "6",
+        "3"
+      ],
+      "slowEcu": true,
+      "confidence": "baja",
+      "note": "Diésel 4D56 / 4M41: K-Line; algunas versiones para Latinoamérica no cumplen OBD-II genérico."
+    },
+    {
+      "make": "Isuzu",
+      "fuel": "diesel",
+      "to": 2013,
+      "protocols": [
+        "5",
+        "4",
+        "3",
+        "6"
+      ],
+      "slowEcu": true,
+      "confidence": "baja"
+    },
+    {
+      "make": "Isuzu",
+      "from": 2014,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "Mercedes-Benz",
+      "from": 2008,
+      "protocols": [
+        "6",
+        "7"
+      ],
+      "confidence": "alta"
+    },
+    {
+      "make": "Mercedes-Benz",
+      "to": 2007,
+      "protocols": [
+        "5",
+        "4",
+        "3",
+        "6"
+      ],
+      "confidence": "media"
+    },
+    {
+      "make": "BMW|Mini",
+      "from": 2008,
+      "protocols": [
+        "6"
+      ],
+      "confidence": "alta"
+    },
+    {
+      "make": "BMW|Mini",
+      "to": 2007,
+      "protocols": [
+        "3",
+        "5",
+        "4"
+      ],
+      "confidence": "media"
+    }
   ],
   "templates": [
-    {"make": "Subaru", "model": "Impreza", "version": "2.0i", "year": 2014, "engine": "FB20", "fuel": "gasolina", "displacement": 2.0, "drive": "awd", "transmission": "cvt", "market": "latam", "redline": 6500},
-    {"make": "Renault", "model": "Sandero", "version": "16V", "year": 2012, "engine": "K4M 1.6 16V", "fuel": "gasolina", "displacement": 1.6, "drive": "fwd", "transmission": "manual", "market": "latam", "redline": 6000},
-    {"make": "Nissan", "model": "Frontier", "version": "NP300 4x4", "year": 2013, "engine": "YD25 2.5 diésel", "fuel": "diesel", "displacement": 2.5, "drive": "4x4", "transmission": "manual", "market": "latam", "redline": 4500}
+    {
+      "make": "Subaru",
+      "model": "Impreza",
+      "version": "2.0i",
+      "year": 2014,
+      "engine": "FB20",
+      "fuel": "gasolina",
+      "displacement": 2.0,
+      "drive": "awd",
+      "transmission": "cvt",
+      "market": "latam",
+      "redline": 6500,
+      "hp": 150,
+      "weightKg": 1380
+    },
+    {
+      "make": "Renault",
+      "model": "Sandero",
+      "version": "16V",
+      "year": 2012,
+      "engine": "K4M 1.6 16V",
+      "fuel": "gasolina",
+      "displacement": 1.6,
+      "drive": "fwd",
+      "transmission": "manual",
+      "market": "latam",
+      "redline": 6000,
+      "hp": 110,
+      "weightKg": 1100
+    },
+    {
+      "make": "Toyota",
+      "model": "Hilux",
+      "version": "2.8 D-4D 4x4",
+      "year": 2018,
+      "engine": "1GD-FTV 2.8 diésel",
+      "fuel": "diesel",
+      "displacement": 2.8,
+      "drive": "4x4",
+      "transmission": "automatica",
+      "market": "latam",
+      "redline": 4200,
+      "hp": 177,
+      "weightKg": 2080
+    },
+    {
+      "make": "Mazda",
+      "model": "Mazda 3",
+      "version": "Grand Touring 2.0",
+      "year": 2017,
+      "engine": "Skyactiv-G 2.0",
+      "fuel": "gasolina",
+      "displacement": 2.0,
+      "drive": "fwd",
+      "transmission": "automatica",
+      "market": "latam",
+      "redline": 6500,
+      "hp": 153,
+      "weightKg": 1330
+    },
+    {
+      "make": "Nissan",
+      "model": "Frontier",
+      "version": "NP300 4x4",
+      "year": 2013,
+      "engine": "YD25 2.5 diésel",
+      "fuel": "diesel",
+      "displacement": 2.5,
+      "drive": "4x4",
+      "transmission": "manual",
+      "market": "latam",
+      "redline": 4500,
+      "hp": 142,
+      "weightKg": 1950
+    }
   ]
 }

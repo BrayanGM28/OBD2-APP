@@ -1,6 +1,7 @@
 package com.nguevara.obdpulse
 
 import android.app.Application
+import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -18,6 +19,7 @@ import com.nguevara.obdpulse.bt.ObdDevice
 import com.nguevara.obdpulse.bt.ObdTransport
 import com.nguevara.obdpulse.bt.TransportException
 import com.nguevara.obdpulse.data.AppSettings
+import com.nguevara.obdpulse.data.PowerCalcMethod
 import com.nguevara.obdpulse.data.GarageStore
 import com.nguevara.obdpulse.data.SettingsStore
 import com.nguevara.obdpulse.data.VehicleDbStore
@@ -71,6 +73,7 @@ sealed interface ConnState {
     data class Connected(val device: ObdDevice, val info: VehicleInfo) : ConnState
     data class Failed(val message: String, val device: ObdDevice?) : ConnState
 }
+if (key in IMU_KEYS) _historyTick.update { it + 1 }
 
 data class Sample(val t: Long, val v: Double)
 
@@ -81,12 +84,6 @@ data class ModuleScanState(
     val modules: List<EcuModule> = emptyList(),
     val readAt: Long? = null,
     val error: String? = null,
-)
-
-data class PhoneImuCalibrationState(
-    val calibrating: Boolean = false,
-    val calibrated: Boolean = false,
-    val message: String? = null,
 )
 
 /** Escaneo de todos los protocolos. */
@@ -107,27 +104,13 @@ data class DiagState(
     val message: String? = null,
 )
 
-class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListener {
+class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settingsStore = SettingsStore(app)
     val settings: StateFlow<AppSettings> = settingsStore.state
 
     val scanner = DeviceScanner(app)
     private val tripRecorder = TripRecorder(File(app.filesDir, "trips"))
-    private val sensorManager = app.getSystemService(Application.SENSOR_SERVICE) as SensorManager
-    private val sensorHandler = Handler(Looper.getMainLooper())
-    private val linearAccelerationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
-    private val gyroscopeSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
-    private val rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-    private var phoneSensorsRegistered = false
-    private val phoneAccelOffset = FloatArray(3)
-    private val phoneGyroOffset = FloatArray(3)
-    private val calibrationLock = Any()
-    private var calibrationAccelSamples: MutableList<FloatArray>? = null
-    private var calibrationGyroSamples: MutableList<FloatArray>? = null
-    private var imuCalibrationJob: Job? = null
-    private val _imuCalibration = MutableStateFlow(PhoneImuCalibrationState())
-    val imuCalibration: StateFlow<PhoneImuCalibrationState> = _imuCalibration.asStateFlow()
 
     // ---- Garaje y base de vehículos ----
     private val garage = GarageStore(app)
@@ -145,6 +128,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
     val dbStatus: StateFlow<String?> = _dbStatus.asStateFlow()
     private val _dbUpdating = MutableStateFlow(false)
     val dbUpdating: StateFlow<Boolean> = _dbUpdating.asStateFlow()
+    private val _scannedVehiclePending = MutableStateFlow(false)
+    val scannedVehiclePending: StateFlow<Boolean> = _scannedVehiclePending.asStateFlow()
 
     private val _modules = MutableStateFlow(ModuleScanState())
     val modules: StateFlow<ModuleScanState> = _modules.asStateFlow()
@@ -176,6 +161,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
 
     private val _tripFiles = MutableStateFlow<List<File>>(emptyList())
     val tripFiles: StateFlow<List<File>> = _tripFiles.asStateFlow()
+    private val _tripMetricKeys = MutableStateFlow(TRIP_KEYS.toSet())
+    val tripMetricKeys: StateFlow<Set<String>> = _tripMetricKeys.asStateFlow()
+
+    private val sensorManager = app.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private val sensorHandler = Handler(Looper.getMainLooper())
+    private val linearAccelerationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+    private val gyroscopeSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+    private val rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    private val _imuCalibrated = MutableStateFlow(false)
+    val imuCalibrated: StateFlow<Boolean> = _imuCalibrated.asStateFlow()
+    private var phoneSensorsStarted = false
+    private var lastLinearAcceleration: FloatArray? = null
+    private var lastGyroscope: FloatArray? = null
+    private val linearAccelerationBias = FloatArray(3)
+    private val gyroscopeBias = FloatArray(3)
+    private val phoneSensorListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            when (event.sensor.type) {
+                Sensor.TYPE_LINEAR_ACCELERATION -> {
+                    lastLinearAcceleration = event.values.copyOf()
+                    store(Metrics.IMU_ACCEL_X, (event.values[0] - linearAccelerationBias[0]).toDouble())
+                    store(Metrics.IMU_ACCEL_Y, (event.values[1] - linearAccelerationBias[1]).toDouble())
+                    store(Metrics.IMU_ACCEL_Z, (event.values[2] - linearAccelerationBias[2]).toDouble())
+                }
+                Sensor.TYPE_GYROSCOPE -> {
+                    lastGyroscope = event.values.copyOf()
+                    val degreesPerSecond = (180.0 / Math.PI)
+                    store(Metrics.IMU_GYRO_X, (event.values[0] - gyroscopeBias[0]) * degreesPerSecond)
+                    store(Metrics.IMU_GYRO_Y, (event.values[1] - gyroscopeBias[1]) * degreesPerSecond)
+                    store(Metrics.IMU_GYRO_Z, (event.values[2] - gyroscopeBias[2]) * degreesPerSecond)
+                }
+                Sensor.TYPE_ROTATION_VECTOR -> {
+                    val rotation = FloatArray(9)
+                    val orientation = FloatArray(3)
+                    SensorManager.getRotationMatrixFromVector(rotation, event.values)
+                    SensorManager.getOrientation(rotation, orientation)
+                    val heading = (Math.toDegrees(orientation[0].toDouble()) + 360.0) % 360.0
+                    store(Metrics.IMU_HEADING, heading)
+                    store(Metrics.IMU_PITCH, Math.toDegrees(orientation[1].toDouble()))
+                    store(Metrics.IMU_ROLL, Math.toDegrees(orientation[2].toDouble()))
+                }
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
 
     private val _diag = MutableStateFlow(DiagState())
     val diag: StateFlow<DiagState> = _diag.asStateFlow()
@@ -193,6 +224,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
     private var pollJob: Job? = null
     private var logJob: Job? = null
     private var scanJob: Job? = null
+    private var scannedVehicleSaveJob: Job? = null
 
     init {
         refreshTripFiles()
@@ -222,6 +254,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
 
     fun connect(device: ObdDevice) {
         if (connectJob?.isActive == true) return
+        scannedVehicleSaveJob?.cancel()
+        scannedVehicleSaveJob = null
+        _scannedVehiclePending.value = false
         stopScan()
         closeLink()
         connectJob = viewModelScope.launch(Dispatchers.IO) {
@@ -252,6 +287,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
                 val info = e.initialize(candidates, slowEcu = rec?.slowEcu == true && device.type != LinkType.DEMO) { step ->
                     _conn.value = ConnState.Connecting(device, step)
                 }
+                val shouldSaveScannedVehicle = device.type != LinkType.DEMO &&
+                    info.ecuOk && info.vin?.let(VinDecoder::isValid) == true
+                _scannedVehiclePending.value = shouldSaveScannedVehicle
                 clearLive()
                 _diag.value = DiagState()
                 _modules.value = ModuleScanState()
@@ -262,6 +300,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
                     if (profile != null && info.ecuOk) learnFromConnection(profile, info)
                 }
                 startPolling(e, info)
+                if (shouldSaveScannedVehicle) {
+                    scannedVehicleSaveJob = viewModelScope.launch(Dispatchers.IO) { saveScannedVehicle(info) }
+                }
             } catch (ce: CancellationException) {
                 t.close()
                 throw ce
@@ -276,6 +317,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
 
     fun disconnect() {
         connectJob?.cancel()
+        scannedVehicleSaveJob?.cancel()
+        scannedVehicleSaveJob = null
+        _scannedVehiclePending.value = false
         closeLink()
         _conn.value = ConnState.Idle
     }
@@ -298,10 +342,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
     private fun closeLink() {
         pollJob?.cancel()
         pollJob = null
-        sensorManager.unregisterListener(this)
-        phoneSensorsRegistered = false
-        imuCalibrationJob?.cancel()
-        imuCalibrationJob = null
+        stopPhoneSensors()
         if (tripRecorder.state.active) stopTrip()
         try {
             transport?.close()
@@ -332,25 +373,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
         get() = (_conn.value as? ConnState.Connected)?.info
 
     fun isAvailable(key: String): Boolean {
-        if (Metrics.isPhoneSensor(key)) {
-            if (connectedInfo == null) return false
-            return when (key) {
-                Metrics.PHONE_ACCEL_X, Metrics.PHONE_ACCEL_Y, Metrics.PHONE_ACCEL_Z, Metrics.PHONE_ACCEL_MAG ->
-                    linearAccelerationSensor != null
-                Metrics.PHONE_GYRO_X, Metrics.PHONE_GYRO_Y, Metrics.PHONE_YAW_RATE -> gyroscopeSensor != null
-                Metrics.PHONE_YAW, Metrics.PHONE_PITCH, Metrics.PHONE_ROLL -> rotationSensor != null
-                else -> false
-            }
-        }
         val info = connectedInfo ?: return false
         val s = info.supportedPids
         return when (key) {
+            Metrics.IMU_ACCEL_X, Metrics.IMU_ACCEL_Y, Metrics.IMU_ACCEL_Z -> linearAccelerationSensor != null
+            Metrics.IMU_GYRO_X, Metrics.IMU_GYRO_Y, Metrics.IMU_GYRO_Z -> gyroscopeSensor != null
+            Metrics.IMU_HEADING, Metrics.IMU_PITCH, Metrics.IMU_ROLL -> rotationVectorSensor != null
             Metrics.VOLTAGE -> true
             Metrics.FUEL_RATE -> canComputeFuelRate(s)
             Metrics.ECONOMY -> canComputeFuelRate(s) && 0x0D in s
             Metrics.BOOST -> 0x0B in s || 0x87 in s || 0x70 in s
-            Metrics.TORQUE -> 0x62 in s && 0x63 in s
-            Metrics.POWER -> (0x62 in s && 0x63 in s && 0x0C in s) || (0x10 in s && !settings.value.diesel)
+            Metrics.TORQUE, Metrics.POWER -> (0x62 in s && 0x63 in s) || (0x0C in s && (0x04 in s || 0x10 in s || 0x0B in s || 0x5E in s))
             Metrics.ACCEL -> 0x0D in s
             Metrics.AFR -> 0x24 in s || 0x44 in s
             else -> Metrics[key]?.pid?.let { it in s } ?: false
@@ -358,6 +391,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
     }
 
     fun availableMetrics(): List<Metric> = Metrics.all.filter { isAvailable(it.key) }
+
+    fun phoneImuAvailable(): Boolean =
+        linearAccelerationSensor != null || gyroscopeSensor != null || rotationVectorSensor != null
+
+    fun calibratePhoneImu() {
+        val acceleration = lastLinearAcceleration
+        val gyroscope = lastGyroscope
+        if (acceleration == null && gyroscope == null) {
+            _toasts.tryEmit("No hay lecturas IMU para calibrar todavía. Mantén el teléfono quieto y vuelve a intentar.")
+            return
+        }
+        acceleration?.copyInto(linearAccelerationBias)
+        gyroscope?.copyInto(gyroscopeBias)
+        _imuCalibrated.value = true
+        _toasts.tryEmit("IMU del teléfono calibrado en reposo. Esto no calibra sensores del vehículo.")
+    }
+
+    private fun startPhoneSensors() {
+        if (phoneSensorsStarted) return
+        var registered = false
+        listOfNotNull(linearAccelerationSensor, gyroscopeSensor, rotationVectorSensor).forEach { sensor ->
+            registered = sensorManager.registerListener(
+                phoneSensorListener,
+                sensor,
+                SensorManager.SENSOR_DELAY_GAME,
+                sensorHandler,
+            ) || registered
+        }
+        phoneSensorsStarted = registered
+    }
+
+    private fun stopPhoneSensors() {
+        if (!phoneSensorsStarted) return
+        sensorManager.unregisterListener(phoneSensorListener)
+        phoneSensorsStarted = false
+    }
+
+    fun setTripMetric(key: String, enabled: Boolean) {
+        if (Metrics[key] == null || !isAvailable(key)) return
+        _tripMetricKeys.update { current ->
+            if (enabled) current + key else current - key
+        }
+    }
 
     /** PIDs que la ECU reporta pero la app no decodifica (se pueden leer en crudo). */
     fun undecodedPids(): List<Int> {
@@ -395,7 +471,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
             out += Metrics.TORQUE_ACTUAL
             out += Metrics.TORQUE_REF
             out += Metrics.RPM
-            if (Metrics.POWER in out && !(0x62 in s && 0x63 in s)) out += Metrics.MAF
+            out += Metrics.LOAD
+            if (0x10 in s) out += Metrics.MAF
+            if (0x0B in s) {
+                out += Metrics.MAP
+                out += Metrics.IAT
+            }
+            if (0x5E in s) out += Metrics.PID_FUEL_RATE
+            out += Metrics.SPEED
         }
         if (Metrics.ACCEL in out) out += Metrics.SPEED
         if (Metrics.AFR in out) out += if (0x24 in s) Metrics.LAMBDA_WIDE else Metrics.LAMBDA_CMD
@@ -412,7 +495,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
             }
         }
         return out.mapNotNull { Metrics[it] }.filter { m ->
-            m.key == Metrics.VOLTAGE || Metrics.isPhoneSensor(m.key) || (m.pid != null && m.pid in s)
+            m.key == Metrics.VOLTAGE ||
+                (m.pid != null && m.pid in s) ||
+                (m.key in IMU_KEYS && isAvailable(m.key))
         }
     }
 
@@ -440,9 +525,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
             val list = expand(watched.value, info.supportedPids)
             val pidMetrics = list.filter { it.pid != null }
             val wantsVoltage = list.any { it.key == Metrics.VOLTAGE }
-            val wantsPhoneSensors = list.any { Metrics.isPhoneSensor(it.key) }
 
-            if (pidMetrics.isEmpty() && !wantsVoltage && !wantsPhoneSensors) {
+            if (pidMetrics.isEmpty() && !wantsVoltage) {
                 delay(300)
                 continue
             }
@@ -523,25 +607,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
             }
         }
 
-        // Turbo: presión absoluta del múltiple − presión atmosférica (kPa → bar).
-        val absolute = v["0170"] ?: v[Metrics.MAP_EXT] ?: v[Metrics.MAP]
-        if (absolute != null && (0x0B in s || 0x87 in s || 0x70 in s)) {
-            val baro = v[Metrics.BARO] ?: 101.3
-            store(Metrics.BOOST, (absolute - baro) / 100.0)
-        }
-
-        // Torque y potencia: % de torque real × torque de referencia (PID 62 y 63).
-        val torquePct = v[Metrics.TORQUE_ACTUAL]
-        val torqueRef = v[Metrics.TORQUE_REF]
-        if (torquePct != null && torqueRef != null) {
-            val nm = (torquePct / 100.0 * torqueRef).coerceAtLeast(0.0)
-            store(Metrics.TORQUE, nm)
-            if (rpm != null) store(Metrics.POWER, nm * rpm / 9549.0 * 1.341) // kW → hp
-        } else if (maf != null && !st.diesel && 0x10 in s) {
-            // Regla práctica para gasolina en mezcla estequiométrica: ≈ 1,32 hp por g/s de aire.
-            store(Metrics.POWER, maf * 1.32)
-        }
-
         // Aceleración a partir de dos lecturas de velocidad consecutivas.
         val cur = lastSpeedSample
         val prev = prevSpeedSample
@@ -553,6 +618,122 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
                 store(Metrics.ACCEL, accelEma.coerceIn(-1.5, 1.5))
             }
             lastAccelT = cur.t
+        }
+
+        // Turbo: presión absoluta del múltiple − presión atmosférica (kPa → bar).
+        val absolute = v["0170"] ?: v[Metrics.MAP_EXT] ?: v[Metrics.MAP]
+        if (absolute != null && (0x0B in s || 0x87 in s || 0x70 in s)) {
+            val baro = v[Metrics.BARO] ?: 101.3
+            store(Metrics.BOOST, (absolute - baro) / 100.0)
+        }
+
+        // -------------------------------------------------------------
+        // Cálculo avanzado de Torque y Potencia Instantánea
+        // -------------------------------------------------------------
+        val torquePct = v[Metrics.TORQUE_ACTUAL]
+        val torqueRef = v[Metrics.TORQUE_REF]
+        val loadPct = v[Metrics.LOAD]
+        val redline = st.redlineRpm.toDouble().coerceAtLeast(4000.0)
+        val userHp = (activeProfile.value?.hp ?: st.hp).toDouble().coerceIn(40.0, 1500.0)
+        val weightKg = (activeProfile.value?.weightKg ?: st.weightKg).toDouble().coerceIn(500.0, 5000.0)
+        val effectiveMaf = maf ?: (if (map != null && rpm != null && iat != null) {
+            rpm / 120.0 * VOLUMETRIC_EFFICIENCY * map * st.displacementL / (8.314 * (iat + 273.15)) * 28.97
+        } else null)
+
+        var calcNm: Double? = null
+        var calcHp: Double? = null
+
+        // 1. Datos nativos de la ECU si existen
+        if (torquePct != null && torqueRef != null) {
+            val nm = (torquePct / 100.0 * torqueRef).coerceAtLeast(0.0)
+            calcNm = nm
+            if (rpm != null && rpm > 100) {
+                calcHp = nm * rpm / 9549.0 * 1.341
+            }
+        }
+
+        val method = st.powerCalcMethod
+        val useNative = (method == PowerCalcMethod.AUTO && calcNm != null)
+
+        if (!useNative) {
+            when (method) {
+                PowerCalcMethod.SPEC_LOAD -> {
+                    // Método Ficha Técnica (HP declarado) + Carga y RPM
+                    if (rpm != null && loadPct != null && rpm > 350) {
+                        val rpmFrac = (rpm / (redline * 0.90)).coerceIn(0.1, 1.05)
+                        val curve = (1.8 * rpmFrac - 0.8 * rpmFrac * rpmFrac).coerceIn(0.15, 1.0)
+                        val hp = (userHp * (loadPct / 100.0) * curve).coerceAtLeast(0.0)
+                        calcHp = hp
+                        calcNm = (hp * 7120.8 / rpm).coerceAtLeast(0.0)
+                    }
+                }
+                PowerCalcMethod.MAF -> {
+                    // Método Flujo Másico de Aire
+                    if (effectiveMaf != null && rpm != null && rpm > 350) {
+                        val factor = if (st.diesel) 1.15 else 1.32
+                        val hp = (effectiveMaf * factor).coerceAtLeast(0.0)
+                        calcHp = hp
+                        calcNm = (hp * 7120.8 / rpm).coerceAtLeast(0.0)
+                    }
+                }
+                PowerCalcMethod.FUEL_ENERGY -> {
+                    // Método Conversión Térmica de Combustible inyectado
+                    if (litersPerHour != null && rpm != null && rpm > 350) {
+                        val energyKwh = if (st.diesel) 9.97 else 9.04
+                        val eff = if (st.diesel) 0.38 else 0.30
+                        val kw = (litersPerHour * energyKwh * eff).coerceAtLeast(0.0)
+                        calcHp = kw * 1.341
+                        calcNm = (kw * 9549.0 / rpm).coerceAtLeast(0.0)
+                    }
+                }
+                PowerCalcMethod.ACCEL -> {
+                    // Método Dinámica e Inercia (F = m·a + F_rod + F_aero)
+                    val speed = v[Metrics.SPEED]
+                    val accel = v[Metrics.ACCEL]
+                    if (speed != null && accel != null && speed > 5.0 && accel > 0.02 && rpm != null && rpm > 350) {
+                        val vMs = speed / 3.6
+                        val aMs2 = accel * 9.81
+                        val fInertia = weightKg * aMs2
+                        val fRolling = weightKg * 9.81 * 0.015
+                        val fAero = 0.5 * 1.2 * 0.75 * vMs * vMs
+                        val pWatts = (fInertia + fRolling + fAero) * vMs
+                        val kw = (pWatts / 1000.0 / 0.85).coerceAtLeast(0.0)
+                        calcHp = kw * 1.341
+                        calcNm = (kw * 9549.0 / rpm).coerceAtLeast(0.0)
+                    }
+                }
+                PowerCalcMethod.AUTO -> {
+                    // Cascada automática si la ECU no dio PIDs 62/63 nativos:
+                    // Prioridad 1: Ficha técnica del usuario + Carga OBD y RPM
+                    if (rpm != null && loadPct != null && rpm > 350 && userHp > 45) {
+                        val rpmFrac = (rpm / (redline * 0.90)).coerceIn(0.1, 1.05)
+                        val curve = (1.8 * rpmFrac - 0.8 * rpmFrac * rpmFrac).coerceIn(0.15, 1.0)
+                        val hp = (userHp * (loadPct / 100.0) * curve).coerceAtLeast(0.0)
+                        calcHp = hp
+                        calcNm = (hp * 7120.8 / rpm).coerceAtLeast(0.0)
+                    } else if (effectiveMaf != null && rpm != null && rpm > 350) {
+                        // Prioridad 2: Flujo de aire MAF
+                        val factor = if (st.diesel) 1.15 else 1.32
+                        val hp = (effectiveMaf * factor).coerceAtLeast(0.0)
+                        calcHp = hp
+                        calcNm = (hp * 7120.8 / rpm).coerceAtLeast(0.0)
+                    } else if (litersPerHour != null && rpm != null && rpm > 350) {
+                        // Prioridad 3: Caudal de combustible
+                        val energyKwh = if (st.diesel) 9.97 else 9.04
+                        val eff = if (st.diesel) 0.38 else 0.30
+                        val kw = (litersPerHour * energyKwh * eff).coerceAtLeast(0.0)
+                        calcHp = kw * 1.341
+                        calcNm = (kw * 9549.0 / rpm).coerceAtLeast(0.0)
+                    }
+                }
+            }
+        }
+
+        if (calcNm != null && !calcNm.isNaN() && !calcNm.isInfinite()) {
+            store(Metrics.TORQUE, calcNm.coerceIn(0.0, 2500.0))
+        }
+        if (calcHp != null && !calcHp.isNaN() && !calcHp.isInfinite()) {
+            store(Metrics.POWER, calcHp.coerceIn(0.0, 1500.0))
         }
 
         // Relación aire/combustible = lambda × estequiométrica.
@@ -699,127 +880,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
     // ------------------------------------------------------------------
 
     fun startTrip() {
-        startTrip(TRIP_KEYS.toSet())
-    }
-
-    fun startTrip(keys: Set<String>) {
         if (connectedInfo == null) return
-        val columns = keys.mapNotNull { Metrics[it] }.filter { isAvailable(it.key) }
+        val columns = Metrics.all.filter { it.key in tripMetricKeys.value && isAvailable(it.key) }
         if (columns.isEmpty()) {
-            notify("Selecciona al menos una variable para el registro.")
+            _toasts.tryEmit("Selecciona al menos una variable disponible para registrar el viaje.")
             return
         }
         tripRecorder.start(columns)
         _trip.value = tripRecorder.state
-    }
-
-    private fun startPhoneSensors() {
-        if (phoneSensorsRegistered) return
-        val sensors = listOfNotNull(linearAccelerationSensor, gyroscopeSensor, rotationSensor)
-        sensors.forEach {
-            phoneSensorsRegistered = sensorManager.registerListener(
-                this,
-                it,
-                SensorManager.SENSOR_DELAY_GAME,
-                sensorHandler,
-            ) || phoneSensorsRegistered
-        }
-    }
-
-    override fun onSensorChanged(event: SensorEvent) {
-        when (event.sensor.type) {
-            Sensor.TYPE_LINEAR_ACCELERATION -> {
-                synchronized(calibrationLock) {
-                    calibrationAccelSamples?.add(event.values.copyOf())
-                }
-                val a = FloatArray(3) { event.values[it] - phoneAccelOffset[it] }
-                store(Metrics.PHONE_ACCEL_X, a[0].toDouble())
-                store(Metrics.PHONE_ACCEL_Y, a[1].toDouble())
-                store(Metrics.PHONE_ACCEL_Z, a[2].toDouble())
-                val magnitude = vectorMagnitude(a) / 9.80665
-                store(Metrics.PHONE_ACCEL_MAG, magnitude)
-            }
-            Sensor.TYPE_GYROSCOPE -> {
-                synchronized(calibrationLock) {
-                    calibrationGyroSamples?.add(event.values.copyOf())
-                }
-                val scale = 180.0 / Math.PI
-                val g = DoubleArray(3) { (event.values[it] - phoneGyroOffset[it]) * scale }
-                store(Metrics.PHONE_GYRO_X, g[0])
-                store(Metrics.PHONE_GYRO_Y, g[1])
-                store(Metrics.PHONE_YAW_RATE, g[2])
-            }
-            Sensor.TYPE_ROTATION_VECTOR -> {
-                val matrix = FloatArray(9)
-                val orientation = FloatArray(3)
-                SensorManager.getRotationMatrixFromVector(matrix, event.values)
-                SensorManager.getOrientation(matrix, orientation)
-                val degrees = 180.0 / Math.PI
-                store(Metrics.PHONE_YAW, orientation[0] * degrees)
-                store(Metrics.PHONE_PITCH, orientation[1] * degrees)
-                store(Metrics.PHONE_ROLL, orientation[2] * degrees)
-            }
-        }
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
-
-    /** Calibra solo el sesgo del IMU del teléfono; el teléfono debe permanecer inmóvil. */
-    fun calibratePhoneImu() {
-        if (linearAccelerationSensor == null && gyroscopeSensor == null) {
-            _imuCalibration.value = PhoneImuCalibrationState(message = "Este teléfono no informa acelerómetro lineal ni giroscopio.")
-            return
-        }
-        if (!phoneSensorsRegistered) startPhoneSensors()
-        if (imuCalibrationJob?.isActive == true) return
-        synchronized(calibrationLock) {
-            calibrationAccelSamples = mutableListOf()
-            calibrationGyroSamples = mutableListOf()
-        }
-        _imuCalibration.value = PhoneImuCalibrationState(
-            calibrating = true,
-            message = "Deja el teléfono quieto y montado como se usará durante 3 segundos.",
-        )
-        imuCalibrationJob = viewModelScope.launch {
-            delay(3_000)
-            val (accelSamples, gyroSamples) = synchronized(calibrationLock) {
-                val samples = calibrationAccelSamples.orEmpty().toList() to calibrationGyroSamples.orEmpty().toList()
-                calibrationAccelSamples = null
-                calibrationGyroSamples = null
-                samples
-            }
-            val accelMean = average(accelSamples)
-            val gyroMean = average(gyroSamples)
-            val accelMotion = accelSamples.maxOfOrNull(::vectorMagnitude) ?: 0.0
-            val gyroMotion = gyroSamples.maxOfOrNull(::vectorMagnitude) ?: 0.0
-            if ((linearAccelerationSensor != null && accelSamples.size < 10) ||
-                (gyroscopeSensor != null && gyroSamples.size < 10) ||
-                accelMotion > 1.5 || gyroMotion > 0.25
-            ) {
-                _imuCalibration.value = PhoneImuCalibrationState(
-                    message = "No se pudo calibrar: faltan lecturas o el teléfono se movió. Inmovilízalo y vuelve a intentar.",
-                )
-            } else {
-                accelMean?.copyInto(phoneAccelOffset)
-                gyroMean?.copyInto(phoneGyroOffset)
-                _imuCalibration.value = PhoneImuCalibrationState(
-                    calibrated = true,
-                    message = "Sesgo del IMU del teléfono calibrado. Los ejes aún dependen de la orientación del soporte.",
-                )
-            }
-        }
-    }
-
-    private fun average(samples: List<FloatArray>): FloatArray? {
-        if (samples.isEmpty()) return null
-        return FloatArray(3) { axis -> samples.sumOf { it[axis].toDouble() }.div(samples.size).toFloat() }
-    }
-
-    private fun vectorMagnitude(values: FloatArray): Double {
-        val x = values[0].toDouble()
-        val y = values[1].toDouble()
-        val z = values[2].toDouble()
-        return kotlin.math.sqrt(x * x + y * y + z * z)
     }
 
     fun stopTrip() {
@@ -845,8 +913,84 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
 
     /** Guarda el perfil y, si es el activo (o [activate]), aplica sus datos al cálculo de consumo y tacómetro. */
     fun saveProfile(p: VehicleProfile, activate: Boolean) {
-        garage.upsert(p)
-        if (activate || settings.value.activeProfileId == p.id) applyProfile(p)
+        val normalized = p.copy(make = vehicleDb.value.canonicalMake(p.make))
+        garage.upsert(normalized)
+        if (activate || settings.value.activeProfileId == normalized.id) applyProfile(normalized)
+    }
+
+    private suspend fun saveScannedVehicle(info: VehicleInfo) {
+        try {
+            val vin = info.vin?.takeIf(VinDecoder::isValid) ?: return
+            val learnedProtocol = info.protocolNumber.takeIf { it.isNotBlank() && it != "0" }
+            val savedByVin = garage.profiles.value.firstOrNull { it.vin.equals(vin, ignoreCase = true) }
+            if (savedByVin != null) {
+                val updated = savedByVin.copy(learnedProtocol = learnedProtocol ?: savedByVin.learnedProtocol)
+                garage.upsert(updated)
+                applyProfile(updated)
+                _toasts.emit("Vehículo reconocido y perfil guardado: ${updated.title} ${updated.year}.")
+                return
+            }
+
+            val decoded = try {
+                OnlineService.decodeVin(vin)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Exception) {
+                VinDecoder.decodeOffline(vin)
+            }
+            val make = decoded?.make?.takeIf { it.isNotBlank() }
+            val model = decoded?.model?.takeIf { it.isNotBlank() }
+            val year = decoded?.year
+            if (decoded == null || make == null || model == null || year == null) {
+                _toasts.emit("Se leyó el VIN, pero no se pudo identificar marca, modelo y año. Completa el registro para guardar el vehículo.")
+                return
+            }
+
+            val canonicalMake = vehicleDb.value.canonicalMake(make)
+            val template = vehicleDb.value.templates.firstOrNull {
+                vehicleDb.value.canonicalMake(it.make).equals(canonicalMake, ignoreCase = true) &&
+                    (it.model.equals(model, ignoreCase = true) ||
+                        model.contains(it.model, ignoreCase = true) ||
+                        it.model.contains(model, ignoreCase = true))
+            }
+            val existing = garage.profiles.value.firstOrNull {
+                it.vin.isNullOrBlank() &&
+                    vehicleDb.value.canonicalMake(it.make).equals(canonicalMake, ignoreCase = true) &&
+                    it.model.equals(model, ignoreCase = true) &&
+                    it.year == year
+            }
+            val defaults = existing ?: template ?: VehicleProfile()
+            val profile = defaults.copy(
+                make = canonicalMake,
+                model = model,
+                year = year,
+                engine = decoded.engine ?: defaults.engine,
+                displacementL = decoded.displacementL ?: defaults.displacementL,
+                fuel = decoded.fuel ?: defaults.fuel,
+                drive = decoded.drive ?: defaults.drive,
+                transmission = decoded.transmission ?: defaults.transmission,
+                hp = decoded.hp ?: defaults.hp,
+                learnedProtocol = learnedProtocol ?: defaults.learnedProtocol,
+                vin = vin,
+            )
+            garage.upsert(profile)
+            applyProfile(profile)
+            val incompleteSpecs = existing == null && template == null &&
+                (decoded.fuel == null || decoded.displacementL == null)
+            _toasts.emit(
+                if (incompleteSpecs) {
+                    "Vehículo guardado: ${profile.title} ${profile.year}. Verifica combustible y cilindrada en el perfil; el VIN no los identificó."
+                } else {
+                    "Vehículo escaneado y guardado: ${profile.title} ${profile.year}."
+                },
+            )
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (ex: Exception) {
+            _toasts.emit("No se pudo guardar el vehículo escaneado: ${ex.message ?: ex.javaClass.simpleName}.")
+        } finally {
+            if (currentCoroutineContext().isActive) _scannedVehiclePending.value = false
+        }
     }
 
     fun selectProfile(id: String?) {
@@ -870,16 +1014,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
                 diesel = p.isDiesel,
                 displacementL = p.displacementL,
                 redlineRpm = p.redlineRpm,
+                hp = p.hp ?: it.hp,
+                weightKg = p.weightKg ?: it.weightKg,
             )
         }
     }
 
-    /** Guarda en el perfil el protocolo con el que respondió (y el VIN si no lo tenía). */
+    /** Guarda en el perfil el protocolo con el que respondió. */
     private fun learnFromConnection(p: VehicleProfile, info: VehicleInfo) {
         val proto = info.protocolNumber.takeIf { it.isNotBlank() && it != "0" }
         val updated = p.copy(
             learnedProtocol = proto ?: p.learnedProtocol,
-            vin = p.vin ?: info.vin,
         )
         if (updated != p) {
             garage.upsert(updated)
@@ -1028,6 +1173,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app), SensorEventListen
         private const val MAX_HISTORY_MS = 10 * 60 * 1000L
         private const val MAX_TERMINAL = 400
         private const val VOLUMETRIC_EFFICIENCY = 0.85
+        private val IMU_KEYS = setOf(
+            Metrics.IMU_ACCEL_X, Metrics.IMU_ACCEL_Y, Metrics.IMU_ACCEL_Z,
+            Metrics.IMU_GYRO_X, Metrics.IMU_GYRO_Y, Metrics.IMU_GYRO_Z,
+            Metrics.IMU_HEADING, Metrics.IMU_PITCH, Metrics.IMU_ROLL,
+        )
 
         val TRIP_KEYS = listOf(
             Metrics.SPEED, Metrics.RPM, Metrics.COOLANT, Metrics.LOAD, Metrics.THROTTLE,

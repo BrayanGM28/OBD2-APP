@@ -72,6 +72,8 @@ import com.nguevara.obdpulse.ui.components.Pill
 import com.nguevara.obdpulse.ui.components.SectionCard
 import com.nguevara.obdpulse.ui.theme.Palette
 import com.nguevara.obdpulse.vehicle.OnlineService
+import com.nguevara.obdpulse.vehicle.VehicleProfile
+import java.util.Calendar
 
 private fun requiredPermissions(): Array<String> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -92,6 +94,8 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
     val profile by vm.activeProfile.collectAsStateWithLifecycle()
     val protoScan by vm.protoScan.collectAsStateWithLifecycle()
     var showGarage by remember { mutableStateOf(false) }
+    var targetDeviceForSetup by remember { mutableStateOf<ObdDevice?>(null) }
+    var vehicleToEdit by remember { mutableStateOf<VehicleProfile?>(null) }
     var permissionDenied by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
@@ -144,6 +148,14 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
         action()
     }
 
+    fun attemptConnect(device: ObdDevice) {
+        if (profile == null) {
+            targetDeviceForSetup = device
+        } else {
+            if (device.type == LinkType.DEMO) vm.connect(device) else withBluetooth { vm.connect(device) }
+        }
+    }
+
     LaunchedEffect(Unit) {
         vm.watch(emptySet())
         if (hasPermissions(context)) vm.loadBonded()
@@ -159,15 +171,23 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
             StatusCard(
                 conn = conn,
                 onDisconnect = { vm.disconnect() },
-                onRetry = { device ->
-                    if (device.type == LinkType.DEMO) vm.connect(device) else withBluetooth { vm.connect(device) }
-                },
+                onRetry = { device -> attemptConnect(device) },
                 onDismiss = { vm.dismissError() },
             )
         }
 
         if (conn !is ConnState.Connecting) {
-            item { ActiveVehicleCard(vm, profile) { showGarage = true } }
+            item {
+                ActiveVehicleCard(
+                    vm = vm,
+                    profile = profile,
+                    onOpenGarage = { showGarage = true },
+                    onEdit = { vehicleToEdit = it },
+                    onConfigureNew = {
+                        vehicleToEdit = VehicleProfile(year = Calendar.getInstance().get(Calendar.YEAR) - 4)
+                    },
+                )
+            }
         }
 
         // La ECU no respondió con el orden recomendado: ofrecer el escaneo completo y la búsqueda en internet.
@@ -277,7 +297,7 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
                                 Text(last.name, fontWeight = FontWeight.SemiBold, color = Palette.TextPrimary)
                                 Text("${last.type.label} · ${last.address}", fontSize = 12.sp, color = Palette.TextMuted)
                             }
-                            Button(onClick = { withBluetooth { vm.connect(last) } }) { Text("Conectar") }
+                            Button(onClick = { attemptConnect(last) }) { Text("Conectar") }
                         }
                     }
                 }
@@ -308,7 +328,7 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
                     )
                 }
                 items(devices, key = { "${it.type}-${it.address}" }) { d ->
-                    DeviceRow(d, enabled = !busy) { withBluetooth { vm.connect(d) } }
+                    DeviceRow(d, enabled = !busy) { attemptConnect(d) }
                 }
             }
 
@@ -325,6 +345,30 @@ fun ConnectScreen(vm: MainViewModel, conn: ConnState, settings: AppSettings) {
 
     if (showGarage) GarageDialog(vm) { showGarage = false }
 
+    targetDeviceForSetup?.let { dev ->
+        VehicleSetupOnConnectDialog(
+            vm = vm,
+            device = dev,
+            onConnect = {
+                targetDeviceForSetup = null
+                if (dev.type == LinkType.DEMO) {
+                    vm.connect(dev)
+                } else {
+                    withBluetooth { vm.connect(dev) }
+                }
+            },
+            onDismiss = { targetDeviceForSetup = null },
+        )
+    }
+
+    vehicleToEdit?.let { prof ->
+        VehicleEditorDialog(
+            vm = vm,
+            initial = prof,
+            isNew = prof.id.isBlank() || settings.profiles.none { it.id == prof.id },
+            onDismiss = { vehicleToEdit = null },
+        )
+    }
 }
 
 @Composable
