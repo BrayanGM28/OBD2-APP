@@ -1,13 +1,20 @@
 package com.nguevara.obdpulse
 
+import android.Manifest
 import android.app.Application
 import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Handler
 import android.os.Looper
+import android.os.Bundle
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nguevara.obdpulse.bt.BleTransport
@@ -110,6 +117,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val scanner = DeviceScanner(app)
     private val tripRecorder = TripRecorder(File(app.filesDir, "trips"))
+    private val locationManager = app.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    private var tripLocationListener: LocationListener? = null
 
     // ---- Garaje y base de vehículos ----
     private val garage = GarageStore(app)
@@ -879,21 +888,92 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // Viajes
     // ------------------------------------------------------------------
 
-    fun startTrip() {
-        if (connectedInfo == null) return
+    fun startTrip(recordGps: Boolean = false): Boolean {
+        if (connectedInfo == null) return false
         val columns = Metrics.all.filter { it.key in tripMetricKeys.value && isAvailable(it.key) }
         if (columns.isEmpty()) {
             _toasts.tryEmit("Selecciona al menos una variable disponible para registrar el viaje.")
-            return
+            return false
         }
-        tripRecorder.start(columns)
+        val locationProvider = if (recordGps) {
+            val fineGranted = ContextCompat.checkSelfPermission(
+                getApplication<Application>(),
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+            val coarseGranted = ContextCompat.checkSelfPermission(
+                getApplication<Application>(),
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!fineGranted && !coarseGranted) {
+                _toasts.tryEmit("Concede permiso de ubicación para guardar la ruta, o desactiva la opción GPS.")
+                return false
+            }
+            val providers = if (fineGranted) {
+                listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            } else {
+                listOf(LocationManager.NETWORK_PROVIDER)
+            }
+            providers.firstOrNull { it in locationManager.getProviders(true) } ?: run {
+                _toasts.tryEmit("Activa la ubicación del teléfono para registrar la ruta GPS.")
+                return false
+            }
+        } else {
+            null
+        }
+
+        tripRecorder.start(columns, recordGps = locationProvider != null)
+        if (locationProvider != null) {
+            val listener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    tripRecorder.updateLocation(
+                        location.latitude,
+                        location.longitude,
+                        location.accuracy.takeIf { location.hasAccuracy() },
+                    )
+                }
+
+                @Deprecated("Deprecated in Android")
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+
+                override fun onProviderEnabled(provider: String) = Unit
+
+                override fun onProviderDisabled(provider: String) = Unit
+            }
+            try {
+                locationManager.requestLocationUpdates(
+                    locationProvider,
+                    1_000L,
+                    0f,
+                    listener,
+                    Looper.getMainLooper(),
+                )
+                tripLocationListener = listener
+            } catch (ex: SecurityException) {
+                tripRecorder.stop()
+                _trip.value = tripRecorder.state
+                _toasts.tryEmit("No se pudo iniciar el GPS: ${ex.message ?: "permiso de ubicación denegado"}.")
+                return false
+            }
+        }
         _trip.value = tripRecorder.state
+        return true
     }
 
     fun stopTrip() {
+        stopTripLocationUpdates()
         tripRecorder.stop()
         _trip.value = tripRecorder.state
         refreshTripFiles()
+    }
+
+    private fun stopTripLocationUpdates() {
+        val listener = tripLocationListener ?: return
+        tripLocationListener = null
+        try {
+            locationManager.removeUpdates(listener)
+        } catch (_: SecurityException) {
+            _toasts.tryEmit("Se revocó el permiso de ubicación; se guardó el viaje sin más puntos GPS.")
+        }
     }
 
     fun refreshTripFiles() {
@@ -1161,6 +1241,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun updateSettings(transform: (AppSettings) -> AppSettings) = settingsStore.update(transform)
 
     override fun onCleared() {
+        stopTripLocationUpdates()
+        tripRecorder.stop()
         closeLink()
         scanner.release()
         super.onCleared()

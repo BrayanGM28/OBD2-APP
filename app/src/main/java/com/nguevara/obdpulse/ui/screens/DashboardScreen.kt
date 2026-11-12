@@ -1,5 +1,9 @@
 package com.nguevara.obdpulse.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,8 +43,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nguevara.obdpulse.ConnState
 import com.nguevara.obdpulse.MainViewModel
@@ -105,6 +111,20 @@ fun DashboardScreen(
     val trip by vm.trip.collectAsStateWithLifecycle()
     val tripMetricKeys by vm.tripMetricKeys.collectAsStateWithLifecycle()
     val tripMetrics = remember(connected.info) { vm.availableMetrics() }
+    val context = LocalContext.current
+    var recordGps by remember { mutableStateOf(false) }
+    val requestTripLocation = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        if (
+            permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        ) {
+            vm.startTrip(recordGps = true)
+        } else {
+            vm.notify("No se concedió ubicación. Desactiva GPS para iniciar el registro sin ruta.")
+        }
+    }
 
     Column(
         Modifier
@@ -173,8 +193,30 @@ fun DashboardScreen(
                 settings = settings,
                 metrics = tripMetrics,
                 selectedMetricKeys = tripMetricKeys,
+                recordGps = recordGps,
+                onRecordGpsChange = { recordGps = it },
                 onMetricToggle = vm::setTripMetric,
-                onStart = { vm.startTrip() },
+                onStart = {
+                    if (recordGps) {
+                        val fineGranted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        val coarseGranted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (fineGranted || coarseGranted) vm.startTrip(recordGps = true)
+                        else requestTripLocation.launch(
+                            arrayOf(
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                            ),
+                        )
+                    } else {
+                        vm.startTrip()
+                    }
+                },
                 onStop = { vm.stopTrip() },
             )
         }
@@ -295,6 +337,8 @@ private fun TripCard(
     settings: AppSettings,
     metrics: List<Metric>,
     selectedMetricKeys: Set<String>,
+    recordGps: Boolean,
+    onRecordGpsChange: (Boolean) -> Unit,
     onMetricToggle: (String, Boolean) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
@@ -335,6 +379,20 @@ private fun TripCard(
             }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = recordGps,
+                    onCheckedChange = onRecordGpsChange,
+                )
+                Column {
+                    Text("Guardar ruta GPS del celular", color = Palette.TextPrimary, fontSize = 13.sp)
+                    Text(
+                        "Añade latitud, longitud y precisión al CSV. Se solicitará permiso al iniciar; mantén la app visible y la ubicación activa.",
+                        color = Palette.TextMuted,
+                        fontSize = 11.sp,
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { showMetricPicker = true }, modifier = Modifier.weight(1f)) {
                     Text("Elegir variables para guardar")
                 }
@@ -345,13 +403,20 @@ private fun TripCard(
                 Spacer(Modifier.width(8.dp))
                 Text("Iniciar registro de viaje")
             }
-            Text(
-                "Guarda las variables elegidas en CSV desde Más → Viajes. Velocidad y consumo también se usan para calcular estadísticas.",
-                fontSize = 12.sp,
-                color = Palette.TextMuted,
-                modifier = Modifier.padding(top = 8.dp),
-            )
         }
+        Text(
+            when {
+                trip.active && trip.gpsEnabled ->
+                    "El GPS añade ubicaciones al CSV mientras la app registra el viaje. La ruta es información sensible y se guarda localmente."
+                trip.active ->
+                    "Guarda las variables seleccionadas en CSV. Velocidad y consumo también se usan para calcular estadísticas."
+                else ->
+                    "Guarda las variables elegidas en CSV desde Más → Viajes. Velocidad y consumo también se usan para calcular estadísticas."
+            },
+            fontSize = 12.sp,
+            color = Palette.TextMuted,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
     if (showMetricPicker) {
         AlertDialog(

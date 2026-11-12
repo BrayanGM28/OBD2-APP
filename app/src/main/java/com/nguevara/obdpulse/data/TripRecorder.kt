@@ -17,6 +17,7 @@ data class TripState(
     val maxSpeed: Double = 0.0,
     val avgSpeed: Double = 0.0,
     val rows: Int = 0,
+    val gpsEnabled: Boolean = false,
 ) {
     /** Rendimiento promedio del viaje en km/L (null si aún no hay datos suficientes). */
     val avgKmPerL: Double?
@@ -37,27 +38,43 @@ class TripRecorder(private val dir: File) {
     private var lastSampleMs = 0L
     private var speedTimeSum = 0.0
     private var movingSeconds = 0.0
+    private var lastLatitude: Double? = null
+    private var lastLongitude: Double? = null
+    private var lastAccuracyMeters: Float? = null
 
     val recordedKeys: Set<String>
         @Synchronized get() = columns.mapTo(linkedSetOf()) { it.key }
 
     @Synchronized
-    fun start(columns: List<Metric>) {
+    fun start(columns: List<Metric>, recordGps: Boolean = false) {
         stop()
         dir.mkdirs()
         val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
         val file = File(dir, "viaje_$stamp.csv")
         this.columns = columns
         writer = file.bufferedWriter().also { w ->
-            val header = listOf("fecha_hora", "segundos") + columns.map { "${it.short} (${it.unit})" }
+            val header = listOf("fecha_hora", "segundos") +
+                columns.map { "${it.short} (${it.unit})" } +
+                if (recordGps) listOf("gps_latitud", "gps_longitud", "gps_precision_m") else emptyList()
             w.write(header.joinToString(","))
             w.newLine()
         }
+        lastLatitude = null
+        lastLongitude = null
+        lastAccuracyMeters = null
         val now = System.currentTimeMillis()
         lastSampleMs = 0L
         speedTimeSum = 0.0
         movingSeconds = 0.0
-        state = TripState(active = true, startMs = now)
+        state = TripState(active = true, startMs = now, gpsEnabled = recordGps)
+    }
+
+    @Synchronized
+    fun updateLocation(latitude: Double, longitude: Double, accuracyMeters: Float?) {
+        if (!state.active || !state.gpsEnabled) return
+        lastLatitude = latitude
+        lastLongitude = longitude
+        lastAccuracyMeters = accuracyMeters
     }
 
     @Synchronized
@@ -89,6 +106,11 @@ class TripRecorder(private val dir: File) {
                 val v = values[m.key]
                 cells += if (v == null) "" else String.format(Locale.US, "%.${m.decimals + 1}f", v)
             }
+            if (state.gpsEnabled) {
+                cells += lastLatitude?.let { String.format(Locale.US, "%.7f", it) } ?: ""
+                cells += lastLongitude?.let { String.format(Locale.US, "%.7f", it) } ?: ""
+                cells += lastAccuracyMeters?.let { String.format(Locale.US, "%.1f", it) } ?: ""
+            }
             w.write(cells.joinToString(","))
             w.newLine()
         }
@@ -111,6 +133,9 @@ class TripRecorder(private val dir: File) {
         } catch (_: Exception) {
         }
         writer = null
+        lastLatitude = null
+        lastLongitude = null
+        lastAccuracyMeters = null
         if (state.active) state = state.copy(active = false)
     }
 

@@ -10,19 +10,22 @@ Kotlin + Jetpack Compose, tema oscuro, en español. Android 8.0 o superior.
 | **Conexión** | Busca adaptadores Clásicos y BLE a la vez, recuerda el último, modo demo sin carro |
 | **Tablero** | Tacómetro y velocímetro de aguja, anillos de temperatura/carga/acelerador, consumo instantáneo, voltaje, registro de viaje |
 | **Gráficas** | Hasta 4 sensores en tiempo real, ventanas de 30 s a 5 min, pausa, mín/prom/máx |
-| **Diagnóstico** | Check Engine, códigos confirmados/pendientes/permanentes con descripción en español, cuadro congelado, monitores de emisiones, borrado de códigos |
+| **Diagnóstico** | Check Engine, códigos confirmados/pendientes/permanentes con explicación al tocar, cuadro congelado, monitores de emisiones explicados, módulos detectados y límites del adaptador |
 | **Más** | Sensores por categoría (y explorador de PIDs no decodificados), módulos, terminal AT, viajes en CSV, vehículos, ajustes |
 
 La app consulta los PIDs soportados por la ECU (0100, 0120, 0140…) y solo muestra lo que tu carro reporta.
 
 ## Novedades de la versión 1.2
 
-- **Perfiles y catálogo ampliados**: la base combina el catálogo actualizado con las marcas, modelos y motores que ya estaban disponibles; incluye reglas de protocolo y plantillas nuevas. "Hunday" se acepta como alias de Hyundai.
+- **Perfiles y catálogo ampliados**: la base combina el catálogo actualizado con las marcas, modelos y motores que ya estaban disponibles; incluye reglas de protocolo y plantillas nuevas.
 - **Registro al escanear**: guarda o actualiza el vehículo cuando el VIN permite identificarlo. Si no alcanza para identificar marca, modelo y año, solicita esos datos antes de guardarlo.
 - **Potencia estimada mejorada**: los perfiles pueden guardar HP y peso para afinar los cálculos de par y potencia.
 - **IMU del teléfono**: muestra aceleración lineal, giro y orientación del celular, con calibración en reposo. No se confunde con sensores del ABS/EPS.
 - **Alertas y explicación de sensores**: cada lectura incluye su descripción y una alerta si sale del rango orientativo. La app aclara que no puede certificar la calibración de una ECU.
 - **Viajes configurables**: permite elegir las columnas de sensores del CSV; velocidad y consumo también se leen internamente para estadísticas.
+- **Ruta del viaje**: permite guardar opcionalmente latitud, longitud y precisión GPS en el CSV. La ubicación se solicita solo si se activa esta opción; para registrar puntos, mantén la app visible y la ubicación del teléfono activa.
+- **Diagnóstico explicado**: al tocar un código o monitor se explica su significado y por qué puede figurar como "Incompleto" o "No aplica". Se detallan también los módulos que el ELM327 detecta y los límites para ABS/ESP, EPS, SRS o TCM.
+- **Cobertura de sensores**: la temperatura del aceite depende de que la ECU exponga el PID estándar 01 5C; freno/ABS suele requerir diagnóstico Subaru específico y un adaptador compatible.
 - **Timón y ABS/EPS**: explica que el ángulo real de dirección suele requerir datos propietarios y herramientas compatibles, y permite buscar información del vehículo.
 
 La app conserva el nombre **OBD Pulse**.

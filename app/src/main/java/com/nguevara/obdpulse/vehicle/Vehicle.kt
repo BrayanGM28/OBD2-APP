@@ -237,8 +237,7 @@ data class VehicleDb(
     val rules: List<ProtocolRule>,
     val templates: List<VehicleProfile>,
 ) {
-    fun makeNames(): List<String> =
-        (makes.map { it.make } + if (hasMake("Hyundai")) listOf("Hunday") else emptyList()).sorted()
+    fun makeNames(): List<String> = makes.map { it.make }.sorted()
 
     fun modelsFor(make: String): List<String> =
         makeEntry(make)?.models.orEmpty()
@@ -248,7 +247,6 @@ data class VehicleDb(
 
     fun canonicalMake(make: String): String {
         val alias = when (make.trim().lowercase(Locale.US)) {
-            "hunday" -> "Hyundai"
             "mercedes" -> "Mercedes-Benz"
             "vw" -> "Volkswagen"
             else -> make.trim()
@@ -258,8 +256,6 @@ data class VehicleDb(
 
     private fun makeEntry(make: String): MakeEntry? =
         makes.firstOrNull { it.make.equals(canonicalMake(make), ignoreCase = true) }
-
-    private fun hasMake(make: String): Boolean = makes.any { it.make.equals(make, ignoreCase = true) }
 
     companion object {
         val EMPTY = VehicleDb(0, "", emptyList(), emptyList(), emptyList())
