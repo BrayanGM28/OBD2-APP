@@ -67,6 +67,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlinx.coroutines.yield
 import com.nguevara.obdpulse.vehicle.OnlineService
 import com.nguevara.obdpulse.vehicle.ProtocolAdvisor

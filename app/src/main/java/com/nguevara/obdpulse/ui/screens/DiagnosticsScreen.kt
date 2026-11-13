@@ -283,6 +283,7 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
         }
 
         item {
+            val oxygenSensors = diag.oxygenSensorsPresent
             SectionCard(title = "Combustible y sensores O₂") {
                 Text(
                     "Tipo de combustible: ${diag.fuelType?.label ?: "no informado por la ECU (PID 51)"}",
@@ -293,18 +294,18 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
                 Text("Sensores O₂ presentes (PID 13):", fontSize = 13.sp, color = Palette.TextSecondary)
                 Spacer(Modifier.height(4.dp))
                 when {
-                    diag.oxygenSensorsPresent == null -> Text(
+                    oxygenSensors == null -> Text(
                         "La ECU no anunció el PID 13 o no respondió.",
                         fontSize = 12.sp,
                         color = Palette.TextMuted,
                     )
-                    diag.oxygenSensorsPresent.isEmpty() -> Text(
+                    oxygenSensors.isEmpty() -> Text(
                         "La máscara de presencia no marcó sensores instalados.",
                         fontSize = 12.sp,
                         color = Palette.TextMuted,
                     )
                     else -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        diag.oxygenSensorsPresent.forEach { sensor ->
+                        oxygenSensors.forEach { sensor ->
                             Pill("B${sensor.bank}S${sensor.position}", Palette.Cyan)
                         }
                     }
