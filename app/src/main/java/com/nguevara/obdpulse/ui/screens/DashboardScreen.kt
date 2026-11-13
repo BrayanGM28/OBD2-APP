@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,6 +52,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nguevara.obdpulse.ConnState
 import com.nguevara.obdpulse.MainViewModel
+import com.nguevara.obdpulse.VehicleMetricAlert
 import com.nguevara.obdpulse.data.AppSettings
 import com.nguevara.obdpulse.data.EconUnit
 import com.nguevara.obdpulse.data.TripState
@@ -71,10 +74,16 @@ import kotlin.math.roundToInt
 private val DASH_KEYS = setOf(
     Metrics.RPM, Metrics.SPEED, Metrics.COOLANT, Metrics.LOAD, Metrics.THROTTLE,
     Metrics.ECONOMY, Metrics.FUEL_RATE, Metrics.VOLTAGE, Metrics.IAT, Metrics.FUEL_LEVEL,
-    Metrics.OIL_TEMP, Metrics.MAF, Metrics.MAP,
+    Metrics.OIL_TEMP, Metrics.MAF, Metrics.MAP, Metrics.STFT1, Metrics.LTFT1,
+    Metrics.STFT2, Metrics.LTFT2, Metrics.LAMBDA_WIDE, Metrics.LAMBDA_CMD,
+)
+private val DASH_SLOT_DEFAULTS = listOf(
+    Metrics.RPM, Metrics.SPEED, Metrics.COOLANT, Metrics.LOAD, Metrics.THROTTLE,
+    Metrics.ECONOMY, Metrics.VOLTAGE, Metrics.IAT, Metrics.FUEL_LEVEL,
 )
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun DashboardScreen(
     vm: MainViewModel,
     conn: ConnState,
@@ -106,11 +115,23 @@ fun DashboardScreen(
         return
     }
 
-    LaunchedEffect(Unit) { vm.watch(DASH_KEYS) }
+    val autoTileKeys = tileKeys(vm)
+    val savedKeys = settings.dashboardMetricKeys
+    val dashboardSlots = remember(connected.info, savedKeys, autoTileKeys) {
+        DASH_SLOT_DEFAULTS.indices.map { index ->
+            val saved = savedKeys.getOrNull(index)
+            val fallback = if (index < 5) DASH_SLOT_DEFAULTS[index] else autoTileKeys.getOrNull(index - 5)
+                ?: DASH_SLOT_DEFAULTS[index]
+            saved?.takeIf(vm::isAvailable) ?: fallback
+        }
+    }
+    LaunchedEffect(dashboardSlots) { vm.watch(DASH_KEYS + dashboardSlots) }
     val tick by vm.historyTick.collectAsStateWithLifecycle()
     val trip by vm.trip.collectAsStateWithLifecycle()
+    val vehicleAlerts by vm.vehicleAlerts.collectAsStateWithLifecycle()
     val tripMetricKeys by vm.tripMetricKeys.collectAsStateWithLifecycle()
-    val tripMetrics = remember(connected.info) { vm.availableMetrics() }
+    val activeProfile by vm.activeProfile.collectAsStateWithLifecycle()
+    val tripMetrics = remember(connected.info, activeProfile) { vm.availableMetrics() }
     val context = LocalContext.current
     var recordGps by remember { mutableStateOf(false) }
     val requestTripLocation = rememberLauncherForActivityResult(
@@ -125,6 +146,8 @@ fun DashboardScreen(
             vm.notify("No se concedió ubicación. Desactiva GPS para iniciar el registro sin ruta.")
         }
     }
+    var editingSlot by remember { mutableStateOf<Int?>(null) }
+    val availableDashboardMetrics = remember(connected.info, activeProfile) { vm.availableMetrics() }
 
     Column(
         Modifier
@@ -133,58 +156,108 @@ fun DashboardScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (vehicleAlerts.isNotEmpty()) {
+            SectionCard(title = "Alertas de operación") {
+                vehicleAlerts.forEach { alert ->
+                    VehicleAlertRow(alert, settings)
+                }
+                Text(
+                    "Umbrales orientativos para el vehículo seleccionado; confirma la especificación del fabricante y no ignores alertas del tablero del auto.",
+                    fontSize = 11.sp,
+                    color = Palette.TextMuted,
+                )
+            }
+        }
+
         // ---- Medidores principales ----
         SectionCard(contentPadding = 10) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val rpm = values[Metrics.RPM]
                 val rpmMax = ceil((settings.redlineRpm + 1500) / 1000.0) * 1000.0
-                ArcGauge(
-                    value = rpm,
-                    min = 0.0,
-                    max = rpmMax,
-                    title = "rpm ×1000",
-                    unit = "rpm",
-                    valueText = Units.format(rpm, 0),
-                    color = Palette.Cyan,
-                    redFrom = settings.redlineRpm.toDouble(),
-                    majorTicks = (rpmMax / 1000).toInt(),
-                    tickLabel = { (it / 1000).roundToInt().toString() },
-                    modifier = Modifier.weight(1f),
-                )
-                val speed = values[Metrics.SPEED]
-                ArcGauge(
-                    value = speed,
-                    min = 0.0,
-                    max = 200.0,
-                    title = "velocidad",
-                    unit = "km/h",
-                    valueText = Units.format(speed, 0),
-                    color = Palette.Amber,
-                    majorTicks = 5,
-                    modifier = Modifier.weight(1f),
-                )
+                listOf(dashboardSlots[0], dashboardSlots[1]).forEachIndexed { index, key ->
+                    val metric = Metrics[key] ?: return@forEachIndexed
+                    val rawValue = values[key]
+                    val (rangeMin, rangeMax) = Units.range(metric, settings)
+                    val gaugeMin = if (key == Metrics.RPM || key == Metrics.SPEED) 0.0 else rangeMin
+                    val gaugeMax = when (key) {
+                        Metrics.RPM -> rpmMax
+                        Metrics.SPEED -> 200.0
+                        else -> rangeMax.takeIf { it > gaugeMin } ?: metric.max
+                    }
+                    ArcGauge(
+                        value = rawValue,
+                        min = gaugeMin,
+                        max = gaugeMax,
+                        title = if (key == Metrics.RPM) "rpm ×1000" else metric.short,
+                        unit = Units.unit(metric, settings),
+                        valueText = Units.display(metric, rawValue, settings),
+                        color = if (index == 0) Palette.Cyan else Palette.Amber,
+                        redFrom = if (key == Metrics.RPM) settings.redlineRpm.toDouble() else null,
+                        majorTicks = 5,
+                        tickLabel = {
+                            if (key == Metrics.RPM) (it / 1000).roundToInt().toString()
+                            else Units.format(it, 0)
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .combinedClickable(onClick = {}, onLongClick = { editingSlot = index }),
+                    )
+                }
             }
         }
 
         // ---- Anillos ----
         SectionCard(contentPadding = 12) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Ring(vm, settings, values, Metrics.COOLANT, Palette.Green, warnC = 105.0, dangerC = 112.0, modifier = Modifier.weight(1f))
-                Ring(vm, settings, values, Metrics.LOAD, Palette.Violet, modifier = Modifier.weight(1f))
-                Ring(vm, settings, values, Metrics.THROTTLE, Palette.Pink, modifier = Modifier.weight(1f))
+                (2..4).forEach { slot ->
+                    Ring(
+                        vm,
+                        settings,
+                        values,
+                        dashboardSlots[slot],
+                        listOf(Palette.Green, Palette.Violet, Palette.Pink)[slot - 2],
+                        modifier = Modifier.weight(1f),
+                        warnC = when (dashboardSlots[slot]) {
+                            Metrics.COOLANT -> 105.0
+                            Metrics.OIL_TEMP -> 130.0
+                            else -> null
+                        },
+                        dangerC = when (dashboardSlots[slot]) {
+                            Metrics.COOLANT -> 112.0
+                            Metrics.OIL_TEMP -> 140.0
+                            else -> null
+                        },
+                        onLongClick = { editingSlot = slot },
+                    )
+                }
             }
         }
 
         // ---- Tarjetas ----
-        val tiles = remember(connected.info) { tileKeys(vm) }
+        val tiles = (5 until 5 + autoTileKeys.size).toList()
         tiles.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                pair.forEach { key ->
-                    DashTile(vm, settings, values, key, tick, Modifier.weight(1f))
+                pair.forEach { slot ->
+                    val key = dashboardSlots[slot]
+                    DashTile(
+                        vm,
+                        settings,
+                        values,
+                        key,
+                        tick,
+                        Modifier.weight(1f),
+                        onLongClick = { editingSlot = slot },
+                    )
                 }
                 if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
         }
+        Text(
+            "Mantén presionado cualquier medidor para cambiar la variable que muestra.",
+            fontSize = 11.sp,
+            color = Palette.TextMuted,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
 
         // ---- Viaje ----
         if (vm.isAvailable(Metrics.SPEED)) {
@@ -221,6 +294,64 @@ fun DashboardScreen(
             )
         }
     }
+
+    editingSlot?.let { slot ->
+        AlertDialog(
+            onDismissRequest = { editingSlot = null },
+            title = { Text("Cambiar variable") },
+            text = {
+                Column(
+                    Modifier
+                        .heightIn(max = 440.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    availableDashboardMetrics.forEach { metric ->
+                        TextButton(
+                            onClick = {
+                                val next = dashboardSlots.toMutableList()
+                                val existingIndex = next.indexOf(metric.key)
+                                if (existingIndex >= 0 && existingIndex != slot) {
+                                    next[existingIndex] = next[slot]
+                                }
+                                next[slot] = metric.key
+                                vm.updateSettings { it.copy(dashboardMetricKeys = next) }
+                                editingSlot = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(metric.name, color = Palette.TextPrimary)
+                                Text("${metric.short} · ${metric.unit}", color = Palette.TextMuted, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { editingSlot = null }) { Text("Cancelar") } },
+            containerColor = Palette.SurfaceHigh,
+        )
+    }
+}
+
+@Composable
+private fun VehicleAlertRow(alert: VehicleMetricAlert, settings: AppSettings) {
+    val metric = Metrics[alert.metricKey]
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(Icons.Rounded.Warning, contentDescription = null, tint = Palette.Amber)
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(
+                "${metric?.name ?: alert.metricKey} · ${metric?.let { Units.display(it, alert.value, settings) } ?: alert.value} ${metric?.let { Units.unit(it, settings) }.orEmpty()}",
+                color = Palette.Amber,
+                fontSize = 13.sp,
+            )
+            Text(alert.message, color = Palette.TextSecondary, fontSize = 12.sp)
+            Text(alert.vehicleName, color = Palette.TextMuted, fontSize = 10.sp)
+        }
+    }
 }
 
 /** Elige hasta 4 tarjetas según lo que soporte el carro. */
@@ -250,6 +381,7 @@ private fun colorFor(key: String): Color = when (key) {
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun Ring(
     vm: MainViewModel,
     settings: AppSettings,
@@ -259,6 +391,7 @@ private fun Ring(
     modifier: Modifier,
     warnC: Double? = null,
     dangerC: Double? = null,
+    onLongClick: () -> Unit = {},
 ) {
     val metric = Metrics[key] ?: return
     if (!vm.isAvailable(key)) {
@@ -284,11 +417,12 @@ private fun Ring(
         color = color,
         warnFrom = warnC?.let { Units.convert(metric, it, settings) },
         dangerFrom = dangerC?.let { Units.convert(metric, it, settings) },
-        modifier = modifier,
+        modifier = modifier.combinedClickable(onClick = {}, onLongClick = onLongClick),
     )
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun DashTile(
     vm: MainViewModel,
     settings: AppSettings,
@@ -296,6 +430,7 @@ private fun DashTile(
     key: String,
     tick: Long,
     modifier: Modifier,
+    onLongClick: () -> Unit,
 ) {
     val metric = Metrics[key] ?: return
     val samples = remember(tick, key) { vm.history(key) }
@@ -315,7 +450,7 @@ private fun DashTile(
             color = colorFor(key),
             samples = samples,
             subtitle = sub,
-            modifier = modifier,
+            modifier = modifier.combinedClickable(onClick = {}, onLongClick = onLongClick),
         )
         return
     }
@@ -327,7 +462,7 @@ private fun DashTile(
         icon = iconFor(key),
         color = colorFor(key),
         samples = samples,
-        modifier = modifier,
+        modifier = modifier.combinedClickable(onClick = {}, onLongClick = onLongClick),
     )
 }
 

@@ -357,10 +357,26 @@ class Elm327(private val transport: ObdTransport) {
     // Diagnóstico
     // ------------------------------------------------------------------
 
-    /** 0101: estado del Check Engine (MIL), número de códigos y monitores de emisiones. */
+    /** 0101: estado del Check Engine y monitores de emisiones del ciclo actual. */
     suspend fun readStatus(): VehicleStatus? {
         val d = queryMode01(0x01, 3_000).firstOrNull { it.size >= 4 } ?: return null
-        return VehicleStatus.parse(d)
+        return VehicleStatus.parse(d, 0x01)
+    }
+
+    /** 0141: estado de monitores desde que se borraron los códigos de falla. */
+    suspend fun readStatusSinceClear(): VehicleStatus? {
+        val d = queryMode01(0x41, 3_000).firstOrNull { it.size >= 4 } ?: return null
+        return VehicleStatus.parse(d, 0x41)
+    }
+
+    suspend fun readOxygenSensorsPresent(): List<OxygenSensorPosition>? {
+        val data = queryMode01(0x13, 3_000).firstOrNull() ?: return null
+        return Mode1PidParser.oxygenSensorsPresent(data)
+    }
+
+    suspend fun readFuelType(): FuelType? {
+        val data = queryMode01(0x51, 3_000).firstOrNull { it.isNotEmpty() } ?: return null
+        return Mode1PidParser.fuelType(data[0])
     }
 
     /**
@@ -671,14 +687,22 @@ class Elm327(private val transport: ObdTransport) {
 data class FreezeFrame(val triggerDtc: String, val values: Map<String, Double>)
 
 /** Estado de un monitor de emisiones (prueba de autodiagnóstico de la ECU). */
-data class MonitorStatus(val name: String, val available: Boolean, val complete: Boolean)
+data class MonitorStatus(
+    val name: String,
+    val available: Boolean,
+    val ready: Boolean,
+) {
+    val notReady: Boolean get() = available && !ready
+    val complete: Boolean get() = ready
+}
 
-/** Respuesta del PID 0101. */
+/** Respuesta de los PID 0101 (ciclo actual) y 0141 (desde el borrado de DTC). */
 data class VehicleStatus(
     val milOn: Boolean,
     val dtcCount: Int,
     val compressionIgnition: Boolean,
     val monitors: List<MonitorStatus>,
+    val sourcePid: Int,
 ) {
     companion object {
         /**
@@ -690,7 +714,8 @@ data class VehicleStatus(
          *  C          = monitores específicos disponibles
          *  D          = monitores específicos incompletos (1 = aún no termina)
          */
-        fun parse(d: IntArray): VehicleStatus {
+        fun parse(d: IntArray, sourcePid: Int = 0x01): VehicleStatus {
+            require(d.size >= 4) { "El estado de monitores requiere cuatro bytes de datos." }
             val a = d[0]
             val b = d[1]
             val c = d[2]
@@ -700,10 +725,11 @@ data class VehicleStatus(
             val monitors = mutableListOf<MonitorStatus>()
             val common = listOf("Fallos de encendido", "Sistema de combustible", "Componentes del motor")
             for (i in 0..2) {
+                val available = ((b shr i) and 1) == 1
                 monitors += MonitorStatus(
                     name = common[i],
-                    available = ((b shr i) and 1) == 1,
-                    complete = ((b shr (i + 4)) and 1) == 0,
+                    available = available,
+                    ready = available && ((b shr (i + 4)) and 1) == 0,
                 )
             }
 
@@ -720,10 +746,11 @@ data class VehicleStatus(
             }
             for (i in 0..7) {
                 if (specific[i].isEmpty()) continue
+                val available = ((c shr i) and 1) == 1
                 monitors += MonitorStatus(
                     name = specific[i],
-                    available = ((c shr i) and 1) == 1,
-                    complete = ((dd shr i) and 1) == 0,
+                    available = available,
+                    ready = available && ((dd shr i) and 1) == 0,
                 )
             }
 
@@ -732,7 +759,63 @@ data class VehicleStatus(
                 dtcCount = a and 0x7F,
                 compressionIgnition = compression,
                 monitors = monitors,
+                sourcePid = sourcePid,
             )
         }
+    }
+}
+
+data class OxygenSensorPosition(val bank: Int, val position: Int)
+
+data class FuelType(val code: Int, val label: String)
+
+object Mode1PidParser {
+    private val fuelTypes = mapOf(
+        0x00 to "No disponible",
+        0x01 to "Gasolina",
+        0x02 to "Metanol",
+        0x03 to "Etanol",
+        0x04 to "Diésel",
+        0x05 to "GLP",
+        0x06 to "Gas natural comprimido (GNC)",
+        0x07 to "Propano",
+        0x08 to "Eléctrico",
+        0x09 to "Bicombustible (funciona con gasolina)",
+        0x0A to "Bicombustible (funciona con metanol)",
+        0x0B to "Bicombustible (funciona con etanol)",
+        0x0C to "Bicombustible (funciona con GLP)",
+        0x0D to "Bicombustible (funciona con GNC)",
+        0x0E to "Bicombustible (funciona con propano)",
+        0x0F to "Bicombustible (funciona con electricidad)",
+        0x10 to "Bicombustible (eléctrico y combustión)",
+        0x11 to "Híbrido gasolina",
+        0x12 to "Híbrido etanol",
+        0x13 to "Híbrido diésel",
+        0x14 to "Híbrido eléctrico",
+        0x15 to "Híbrido (funciona con electricidad y combustión)",
+        0x16 to "Híbrido regenerativo",
+        0x17 to "Bicombustible diésel",
+    )
+
+    /**
+     * PID 13 estándar ocupa un byte: bits 0–3 son B1S1–B1S4 y 4–7 B2S1–B2S4.
+     * Se acepta un segundo byte para respuestas extendidas (bancos 3 y 4).
+     */
+    fun oxygenSensorsPresent(data: IntArray): List<OxygenSensorPosition> {
+        val result = mutableListOf<OxygenSensorPosition>()
+        data.take(2).forEachIndexed { byteIndex, mask ->
+            for (bit in 0..7) {
+                if ((mask and (1 shl bit)) == 0) continue
+                val bank = byteIndex * 2 + if (bit < 4) 1 else 2
+                val position = bit % 4 + 1
+                result += OxygenSensorPosition(bank, position)
+            }
+        }
+        return result
+    }
+
+    fun fuelType(code: Int): FuelType {
+        val normalized = code and 0xFF
+        return FuelType(normalized, fuelTypes[normalized] ?: "Desconocido (0x${normalized.toString(16).uppercase().padStart(2, '0')})")
     }
 }

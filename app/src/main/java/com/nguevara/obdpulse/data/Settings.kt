@@ -40,6 +40,8 @@ data class AppSettings(
     val lastDevice: ObdDevice? = null,
     /** Vehículo del garaje en uso (null = ninguno: se usan los valores de arriba). */
     val activeProfileId: String? = null,
+    /** Las nueve posiciones personalizables del tablero; vacío conserva el diseño automático. */
+    val dashboardMetricKeys: List<String> = emptyList(),
     /** De dónde se descarga la base de vehículos actualizada. */
     val dbUrl: String = OnlineService.DEFAULT_DB_URL,
 )
@@ -85,6 +87,10 @@ class SettingsStore(context: Context) {
             keepScreenOn = prefs.getBoolean("keep_screen", true),
             lastDevice = last,
             activeProfileId = prefs.getString("active_profile", null),
+            dashboardMetricKeys = prefs.getString("dashboard_metric_keys", null)
+                ?.split(',')
+                ?.filter { it.isNotBlank() }
+                .orEmpty(),
             dbUrl = prefs.getString("db_url", null)?.takeIf { it.isNotBlank() } ?: OnlineService.DEFAULT_DB_URL,
         )
     }
@@ -103,6 +109,11 @@ class SettingsStore(context: Context) {
             putInt("poll_delay", s.pollDelayMs)
             putBoolean("keep_screen", s.keepScreenOn)
             putString("active_profile", s.activeProfileId)
+            if (s.dashboardMetricKeys.isEmpty()) {
+                remove("dashboard_metric_keys")
+            } else {
+                putString("dashboard_metric_keys", s.dashboardMetricKeys.joinToString(","))
+            }
             // Solo se guarda si el usuario la cambió: así una versión nueva de la app puede cambiar la URL por defecto.
             if (s.dbUrl == OnlineService.DEFAULT_DB_URL) remove("db_url") else putString("db_url", s.dbUrl)
             val d = s.lastDevice

@@ -31,15 +31,18 @@ import com.nguevara.obdpulse.data.GarageStore
 import com.nguevara.obdpulse.data.SettingsStore
 import com.nguevara.obdpulse.data.VehicleDbStore
 import com.nguevara.obdpulse.data.TripRecorder
+import com.nguevara.obdpulse.data.TripRecordingService
 import com.nguevara.obdpulse.data.TripState
 import com.nguevara.obdpulse.obd.DtcInfo
 import com.nguevara.obdpulse.obd.DtcItem
 import com.nguevara.obdpulse.obd.DtcKind
 import com.nguevara.obdpulse.obd.EcuModule
 import com.nguevara.obdpulse.obd.Elm327
+import com.nguevara.obdpulse.obd.FuelType
 import com.nguevara.obdpulse.obd.FreezeFrame
 import com.nguevara.obdpulse.obd.Metric
 import com.nguevara.obdpulse.obd.Metrics
+import com.nguevara.obdpulse.obd.OxygenSensorPosition
 import com.nguevara.obdpulse.obd.ProtocolProbe
 import com.nguevara.obdpulse.obd.TermLine
 import com.nguevara.obdpulse.obd.VehicleInfo
@@ -83,6 +86,13 @@ sealed interface ConnState {
 
 data class Sample(val t: Long, val v: Double)
 
+data class VehicleMetricAlert(
+    val metricKey: String,
+    val value: Double,
+    val message: String,
+    val vehicleName: String,
+)
+
 /** Verificación de módulos (solo lectura). */
 data class ModuleScanState(
     val loading: Boolean = false,
@@ -104,6 +114,9 @@ data class DiagState(
     val loading: Boolean = false,
     val step: String = "",
     val status: VehicleStatus? = null,
+    val statusSinceClear: VehicleStatus? = null,
+    val oxygenSensorsPresent: List<OxygenSensorPosition>? = null,
+    val fuelType: FuelType? = null,
     val dtcs: List<DtcItem> = emptyList(),
     val freeze: FreezeFrame? = null,
     val readAt: Long? = null,
@@ -158,6 +171,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Último valor de cada magnitud (unidades base). */
     private val _values = MutableStateFlow<Map<String, Double>>(emptyMap())
     val values: StateFlow<Map<String, Double>> = _values.asStateFlow()
+    private val _vehicleAlerts = MutableStateFlow<List<VehicleMetricAlert>>(emptyList())
+    val vehicleAlerts: StateFlow<List<VehicleMetricAlert>> = _vehicleAlerts.asStateFlow()
+    private val alertStreaks = mutableMapOf<String, Int>()
 
     /** Historial para las gráficas. [historyTick] cambia cada vez que llega un ciclo nuevo. */
     private val history = HashMap<String, ArrayDeque<Sample>>()
@@ -383,6 +399,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun isAvailable(key: String): Boolean {
         val info = connectedInfo ?: return false
         val s = info.supportedPids
+        val hasProfilePowerSpecs = activeProfile.value?.let { it.hp != null || it.torqueNm != null } == true
         return when (key) {
             Metrics.IMU_ACCEL_X, Metrics.IMU_ACCEL_Y, Metrics.IMU_ACCEL_Z -> linearAccelerationSensor != null
             Metrics.IMU_GYRO_X, Metrics.IMU_GYRO_Y, Metrics.IMU_GYRO_Z -> gyroscopeSensor != null
@@ -391,7 +408,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             Metrics.FUEL_RATE -> canComputeFuelRate(s)
             Metrics.ECONOMY -> canComputeFuelRate(s) && 0x0D in s
             Metrics.BOOST -> 0x0B in s || 0x87 in s || 0x70 in s
-            Metrics.TORQUE, Metrics.POWER -> (0x62 in s && 0x63 in s) || (0x0C in s && (0x04 in s || 0x10 in s || 0x0B in s || 0x5E in s))
+            Metrics.TORQUE, Metrics.POWER -> (0x62 in s && 0x63 in s) ||
+                (0x0C in s && (hasProfilePowerSpecs || 0x04 in s || 0x10 in s || 0x0B in s || 0x5E in s))
             Metrics.ACCEL -> 0x0D in s
             Metrics.AFR -> 0x24 in s || 0x44 in s
             else -> Metrics[key]?.pid?.let { it in s } ?: false
@@ -461,6 +479,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun expand(keys: Set<String>, s: Set<Int>): List<Metric> {
         val out = linkedSetOf<String>()
         out += keys
+        if (keys.isNotEmpty()) out += ALERT_MONITOR_KEYS
         val recording = tripRecorder.state.active
         if (recording) {
             out += tripRecorder.recordedKeys
@@ -643,6 +662,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val loadPct = v[Metrics.LOAD]
         val redline = st.redlineRpm.toDouble().coerceAtLeast(4000.0)
         val userHp = (activeProfile.value?.hp ?: st.hp).toDouble().coerceIn(40.0, 1500.0)
+        val profileSpecs = activeProfile.value
         val weightKg = (activeProfile.value?.weightKg ?: st.weightKg).toDouble().coerceIn(500.0, 5000.0)
         val effectiveMaf = maf ?: (if (map != null && rpm != null && iat != null) {
             rpm / 120.0 * VOLUMETRIC_EFFICIENCY * map * st.displacementL / (8.314 * (iat + 273.15)) * 28.97
@@ -667,7 +687,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             when (method) {
                 PowerCalcMethod.SPEC_LOAD -> {
                     // Método Ficha Técnica (HP declarado) + Carga y RPM
-                    if (rpm != null && loadPct != null && rpm > 350) {
+                    val specEstimate = if (rpm != null && profileSpecs != null) {
+                        estimateFromVehicleSpecs(profileSpecs, rpm, loadPct, redline)
+                    } else {
+                        null
+                    }
+                    if (specEstimate != null) {
+                        calcNm = specEstimate.first
+                        calcHp = specEstimate.second
+                    } else if (rpm != null && loadPct != null && rpm > 350) {
                         val rpmFrac = (rpm / (redline * 0.90)).coerceIn(0.1, 1.05)
                         val curve = (1.8 * rpmFrac - 0.8 * rpmFrac * rpmFrac).coerceIn(0.15, 1.0)
                         val hp = (userHp * (loadPct / 100.0) * curve).coerceAtLeast(0.0)
@@ -712,8 +740,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 PowerCalcMethod.AUTO -> {
                     // Cascada automática si la ECU no dio PIDs 62/63 nativos:
-                    // Prioridad 1: Ficha técnica del usuario + Carga OBD y RPM
-                    if (rpm != null && loadPct != null && rpm > 350 && userHp > 45) {
+                    // Prioridad 1: HP/Nm de ficha técnica cuando existen.
+                    val specEstimate = if (rpm != null && profileSpecs != null) {
+                        estimateFromVehicleSpecs(profileSpecs, rpm, loadPct, redline)
+                    } else {
+                        null
+                    }
+                    if (specEstimate != null) {
+                        calcNm = specEstimate.first
+                        calcHp = specEstimate.second
+                    } else if (rpm != null && loadPct != null && rpm > 350 && userHp > 45) {
                         val rpmFrac = (rpm / (redline * 0.90)).coerceIn(0.1, 1.05)
                         val curve = (1.8 * rpmFrac - 0.8 * rpmFrac * rpmFrac).coerceIn(0.15, 1.0)
                         val hp = (userHp * (loadPct / 100.0) * curve).coerceAtLeast(0.0)
@@ -749,6 +785,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (lambda != null && lambda > 0.3) store(Metrics.AFR, lambda * afr)
     }
 
+    private fun estimateFromVehicleSpecs(
+        profile: VehicleProfile,
+        rpm: Double,
+        engineLoadPercent: Double?,
+        redlineRpm: Double,
+    ): Pair<Double, Double>? {
+        if (rpm <= 350.0 || (profile.hp == null && profile.torqueNm == null)) return null
+        val peakHp = profile.hp?.toDouble()
+        val peakHpRpm = profile.hpRpm?.toDouble() ?: redlineRpm * 0.90
+        val peakTorque = profile.torqueNm ?: peakHp?.let { it * 7120.8 / peakHpRpm }
+        val peakTorqueRpm = profile.torqueRpm?.toDouble()
+            ?: profile.hpRpm?.times(0.65)
+            ?: redlineRpm * 0.60
+        val loadScale = ((engineLoadPercent ?: 100.0) / 100.0).coerceIn(0.0, 1.0)
+
+        val torqueCurve = peakTorque?.let { maxTorque ->
+            when {
+                rpm < peakTorqueRpm ->
+                    maxTorque * (0.55 + 0.45 * (rpm / peakTorqueRpm).coerceIn(0.0, 1.0))
+                peakHp != null && peakHpRpm > peakTorqueRpm && rpm <= peakHpRpm -> {
+                    val torqueAtHpPeak = peakHp * 7120.8 / peakHpRpm
+                    val progress = ((rpm - peakTorqueRpm) / (peakHpRpm - peakTorqueRpm)).coerceIn(0.0, 1.0)
+                    maxTorque + (torqueAtHpPeak - maxTorque) * progress
+                }
+                else -> {
+                    val falloffStart = if (peakHp != null) peakHpRpm else peakTorqueRpm
+                    val progress = ((rpm - falloffStart) / (redlineRpm - falloffStart).coerceAtLeast(1.0))
+                        .coerceIn(0.0, 1.0)
+                    maxTorque * (1.0 - 0.35 * progress)
+                }
+            }
+        }
+        val hpCurve = peakHp?.let { maxHp ->
+            val fraction = (rpm / peakHpRpm).coerceIn(0.0, 1.0)
+            maxHp * (1.8 * fraction - 0.8 * fraction * fraction).coerceIn(0.0, 1.0)
+        }
+        val torqueFromHp = hpCurve?.let { it * 7120.8 / rpm }
+        val estimatedTorque = when {
+            torqueCurve != null && torqueFromHp != null -> minOf(torqueCurve, torqueFromHp)
+            torqueCurve != null -> torqueCurve
+            torqueFromHp != null -> torqueFromHp
+            else -> return null
+        } * loadScale
+        return estimatedTorque to (estimatedTorque * rpm / 7120.8)
+    }
+
     @Volatile private var lastSpeedSample: Sample? = null
     @Volatile private var prevSpeedSample: Sample? = null
     private var lastAccelT = 0L
@@ -756,6 +838,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun store(key: String, v: Double) {
         _values.update { it + (key to v) }
+        updateVehicleAlert(key, v)
         val now = System.currentTimeMillis()
         if (key == Metrics.SPEED) {
             prevSpeedSample = lastSpeedSample
@@ -769,10 +852,72 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (key in IMU_KEYS) _historyTick.update { it + 1 }
     }
 
+    private fun updateVehicleAlert(key: String, value: Double) {
+        val metric = Metrics[key] ?: return
+        val reason = when (key) {
+            Metrics.COOLANT -> when {
+                value > 110.0 -> "El refrigerante supera 110 °C; reduce la carga y detente en un lugar seguro si la temperatura sigue subiendo."
+                value < -30.0 -> "La lectura de refrigerante parece fuera del rango físico esperado; verifica sensor y conexión."
+                else -> null
+            }
+            Metrics.OIL_TEMP -> when {
+                value > 140.0 -> "El aceite supera 140 °C; reduce la carga y revisa el sistema de lubricación/enfriamiento."
+                value < -30.0 -> "La lectura de temperatura de aceite parece fuera del rango físico esperado."
+                else -> null
+            }
+            Metrics.STFT1, Metrics.STFT2, Metrics.LTFT1, Metrics.LTFT2 ->
+                if (kotlin.math.abs(value) >= 15.0) {
+                    "${metric.short} está en ${String.format(Locale.US, "%.1f", value)}%; una corrección persistente mayor a ±15% puede indicar mezcla fuera de ajuste."
+                } else {
+                    null
+                }
+            Metrics.LAMBDA_WIDE, Metrics.LAMBDA_CMD -> {
+                val load = _values.value[Metrics.LOAD] ?: 0.0
+                when {
+                    value > 1.25 || (value > 1.15 && load < 80.0) ->
+                        "Lambda ${String.format(Locale.US, "%.2f", value)} indica mezcla muy pobre para la carga reportada; verifica trims y alimentación."
+                    value < 0.70 && load < 80.0 ->
+                        "Lambda ${String.format(Locale.US, "%.2f", value)} indica mezcla muy rica a carga baja; verifica sensores y control de combustible."
+                    else -> null
+                }
+            }
+            Metrics.AFR -> {
+                val isDiesel = activeProfile.value?.isDiesel ?: settings.value.diesel
+                val tooRich = value < 10.0
+                val tooLean = value > if (isDiesel) 30.0 else 18.0
+                when {
+                    tooRich -> "AFR ${String.format(Locale.US, "%.1f", value)} es muy rico para el combustible configurado."
+                    tooLean -> "AFR ${String.format(Locale.US, "%.1f", value)} es muy pobre para el combustible configurado."
+                    else -> null
+                }
+            }
+            else -> null
+        }
+        if (reason == null || value.isNaN() || value.isInfinite()) {
+            alertStreaks.remove(key)
+            _vehicleAlerts.update { alerts -> alerts.filterNot { it.metricKey == key } }
+            return
+        }
+        val streak = (alertStreaks[key] ?: 0) + 1
+        alertStreaks[key] = streak
+        if (streak < ALERT_CONFIRMATION_SAMPLES) return
+        val alert = VehicleMetricAlert(
+            metricKey = key,
+            value = value,
+            message = reason,
+            vehicleName = activeProfile.value?.let { "${it.title} ${it.year}" } ?: "vehículo conectado",
+        )
+        _vehicleAlerts.update { alerts ->
+            (alerts.filterNot { it.metricKey == key } + alert).takeLast(MAX_ACTIVE_ALERTS)
+        }
+    }
+
     fun history(key: String): List<Sample> = synchronized(history) { history[key]?.toList() ?: emptyList() }
 
     private fun clearLive() {
         _values.value = emptyMap()
+        _vehicleAlerts.value = emptyList()
+        alertStreaks.clear()
         lastSpeedSample = null
         prevSpeedSample = null
         accelEma = 0.0
@@ -792,6 +937,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _diag.update { it.copy(loading = true, step = "Leyendo estado del Check Engine…", message = null) }
             try {
                 val status = e.readStatus()
+                val statusSinceClear = if (0x41 in info.supportedPids) e.readStatusSinceClear() else null
+                val oxygenSensors = if (0x13 in info.supportedPids) e.readOxygenSensorsPresent() else null
+                val fuelType = if (0x51 in info.supportedPids) e.readFuelType() else null
 
                 _diag.update { it.copy(step = "Leyendo códigos confirmados…") }
                 val stored = e.readDtcs("03").map { DtcInfo.item(it, DtcKind.STORED) }
@@ -817,6 +965,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _diag.value = DiagState(
                     loading = false,
                     status = status,
+                    statusSinceClear = statusSinceClear,
+                    oxygenSensorsPresent = oxygenSensors,
+                    fuelType = fuelType,
                     dtcs = all,
                     freeze = freeze,
                     readAt = System.currentTimeMillis(),
@@ -921,7 +1072,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
-        tripRecorder.start(columns, recordGps = locationProvider != null)
+        try {
+            TripRecordingService.start(getApplication(), recordGps = locationProvider != null)
+        } catch (ex: IllegalStateException) {
+            _toasts.tryEmit("Android no permitió mantener activo el registro: ${ex.message ?: "servicio en segundo plano no disponible"}.")
+            return false
+        } catch (ex: SecurityException) {
+            _toasts.tryEmit("Falta un permiso requerido para mantener el registro activo: ${ex.message ?: "permiso denegado"}.")
+            return false
+        }
+
+        val profile = activeProfile.value
+        val vehicleFilename = profile?.let { "${it.title}_${it.year}" }
+            ?: connectedInfo?.vin
+            ?: "vehiculo_sin_registro"
+        tripRecorder.start(columns, recordGps = locationProvider != null, vehicleName = vehicleFilename)
         if (locationProvider != null) {
             val listener = object : LocationListener {
                 override fun onLocationChanged(location: Location) {
@@ -951,6 +1116,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (ex: SecurityException) {
                 tripRecorder.stop()
                 _trip.value = tripRecorder.state
+                TripRecordingService.stop(getApplication())
                 _toasts.tryEmit("No se pudo iniciar el GPS: ${ex.message ?: "permiso de ubicación denegado"}.")
                 return false
             }
@@ -962,6 +1128,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun stopTrip() {
         stopTripLocationUpdates()
         tripRecorder.stop()
+        TripRecordingService.stop(getApplication())
         _trip.value = tripRecorder.state
         refreshTripFiles()
     }
@@ -1185,13 +1352,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val e = elm ?: return null
         return withContext(Dispatchers.IO) {
             try {
-                cycleLock.withLock { e.rawMode01(pid) }
+                cycleLock.withLock {
+                    when (pid) {
+                        0x01 -> e.readStatus()?.let(::statusSummary)
+                        0x41 -> e.readStatusSinceClear()?.let(::statusSummary)
+                        0x13 -> e.readOxygenSensorsPresent()?.let { sensors ->
+                            sensors.joinToString(", ") { "B${it.bank}S${it.position}" }
+                                .ifBlank { "Ningún sensor marcado como presente" }
+                        }
+                        0x51 -> e.readFuelType()?.label
+                        else -> e.rawMode01(pid)
+                    }
+                }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (ex: Exception) {
                 null
             }
         }
+    }
+
+    private fun statusSummary(status: VehicleStatus): String = buildString {
+        append(if (status.milOn) "Check Engine encendido" else "Check Engine apagado")
+        append(" · ${status.dtcCount} DTC · ")
+        append(status.monitors.count { it.available && it.ready })
+        append(" monitores listos")
     }
 
     // ------------------------------------------------------------------
@@ -1243,6 +1428,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         stopTripLocationUpdates()
         tripRecorder.stop()
+        TripRecordingService.stop(getApplication())
         closeLink()
         scanner.release()
         super.onCleared()
@@ -1254,11 +1440,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private const val MAX_HISTORY = 4_000
         private const val MAX_HISTORY_MS = 10 * 60 * 1000L
         private const val MAX_TERMINAL = 400
+        private const val ALERT_CONFIRMATION_SAMPLES = 3
+        private const val MAX_ACTIVE_ALERTS = 5
         private const val VOLUMETRIC_EFFICIENCY = 0.85
         private val IMU_KEYS = setOf(
             Metrics.IMU_ACCEL_X, Metrics.IMU_ACCEL_Y, Metrics.IMU_ACCEL_Z,
             Metrics.IMU_GYRO_X, Metrics.IMU_GYRO_Y, Metrics.IMU_GYRO_Z,
             Metrics.IMU_HEADING, Metrics.IMU_PITCH, Metrics.IMU_ROLL,
+        )
+        private val ALERT_MONITOR_KEYS = setOf(
+            Metrics.COOLANT, Metrics.OIL_TEMP, Metrics.STFT1, Metrics.LTFT1,
+            Metrics.STFT2, Metrics.LTFT2, Metrics.LAMBDA_WIDE, Metrics.LAMBDA_CMD, Metrics.LOAD,
         )
 
         val TRIP_KEYS = listOf(

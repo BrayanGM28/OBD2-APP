@@ -66,6 +66,12 @@ data class VehicleProfile(
     val redlineRpm: Int = 6000,
     /** Potencia máxima declarada en caballos de fuerza (HP) para estimación precisa de par/potencia. */
     val hp: Int? = null,
+    /** RPM de potencia máxima declaradas por el fabricante, cuando se conocen. */
+    val hpRpm: Int? = null,
+    /** Torque máximo declarado en Nm para estimación precisa de par/potencia. */
+    val torqueNm: Double? = null,
+    /** RPM de torque máximo declaradas por el fabricante, cuando se conocen. */
+    val torqueRpm: Int? = null,
     /** Peso en orden de marcha estimado en kg (para estimación inercial de potencia). */
     val weightKg: Int? = null,
     /** Protocolo elegido a mano (null = usar la recomendación). */
@@ -83,6 +89,7 @@ data class VehicleProfile(
             engine.takeIf { it.isNotBlank() },
             String.format(Locale.US, "%.1f L", displacementL),
             hp?.let { "$it hp" },
+            torqueNm?.let { "${it.toInt()} Nm" },
             fuel.label,
             transmission.label,
             drive.label,
@@ -94,7 +101,7 @@ data class VehicleProfile(
         "id" to id, "make" to make, "model" to model, "version" to version, "year" to year,
         "engine" to engine, "fuel" to fuel.code, "displacement" to displacementL, "drive" to drive.code,
         "transmission" to transmission.code, "market" to market.code, "redline" to redlineRpm,
-        "hp" to hp, "weightKg" to weightKg,
+        "hp" to hp, "hpRpm" to hpRpm, "torqueNm" to torqueNm, "torqueRpm" to torqueRpm, "weightKg" to weightKg,
         "protocolOverride" to protocolOverride, "learnedProtocol" to learnedProtocol, "vin" to vin,
         "nickname" to nickname,
     )
@@ -114,6 +121,9 @@ data class VehicleProfile(
             market = Market.from(m.str("market")),
             redlineRpm = m.int("redline") ?: 6000,
             hp = m.int("hp"),
+            hpRpm = m.int("hpRpm"),
+            torqueNm = m.dbl("torqueNm"),
+            torqueRpm = m.int("torqueRpm"),
             weightKg = m.int("weightKg"),
             protocolOverride = m.str("protocolOverride"),
             learnedProtocol = m.str("learnedProtocol"),

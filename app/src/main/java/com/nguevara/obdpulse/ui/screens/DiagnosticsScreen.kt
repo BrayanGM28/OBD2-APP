@@ -58,6 +58,7 @@ import com.nguevara.obdpulse.obd.DtcKind
 import com.nguevara.obdpulse.obd.Metrics
 import com.nguevara.obdpulse.obd.MonitorStatus
 import com.nguevara.obdpulse.obd.Severity
+import com.nguevara.obdpulse.obd.VehicleStatus
 import com.nguevara.obdpulse.ui.components.EmptyState
 import com.nguevara.obdpulse.ui.components.FuelTrimLambdaGuideDialog
 import com.nguevara.obdpulse.ui.components.InfoRow
@@ -86,8 +87,6 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
 
     val diag by vm.diag.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val activeProfile by vm.activeProfile.collectAsStateWithLifecycle()
-    val vehicleMakeQualifier = activeProfile?.make?.takeIf { it.isNotBlank() }?.let { "de $it" } ?: "del fabricante"
     var confirmClear by remember { mutableStateOf(false) }
     var showFuelGuide by remember { mutableStateOf(false) }
     var showEngineInfo by remember { mutableStateOf(false) }
@@ -256,36 +255,66 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
             }
         }
 
-        // ---- Monitores ----
+        // ---- Estado de monitores ----
         diag.status?.let { st ->
             item {
-                SectionCard(title = "Monitores de emisiones") {
+                ReadinessCard("Estado actual · PID 01", st) { selectedMonitor = it }
+            }
+        }
+        diag.statusSinceClear?.let { st ->
+            item {
+                ReadinessCard("Desde borrado de códigos · PID 41", st) { selectedMonitor = it }
+            }
+        }
+        if (diag.statusSinceClear == null) {
+            item {
+                SectionCard(title = "Monitor readiness desde borrado · PID 41") {
                     Text(
-                        if (st.compressionIgnition) "Motor diésel (encendido por compresión)" else "Motor a gasolina (encendido por chispa)",
+                        if (0x41 in connected.info.supportedPids) {
+                            "La ECU anuncia el PID 41, pero no respondió a la consulta."
+                        } else {
+                            "Esta ECU no anuncia el PID 41. Se muestra el estado actual del PID 01 cuando está disponible."
+                        },
+                        fontSize = 12.sp,
+                        color = Palette.TextSecondary,
+                    )
+                }
+            }
+        }
+
+        item {
+            SectionCard(title = "Combustible y sensores O₂") {
+                Text(
+                    "Tipo de combustible: ${diag.fuelType?.label ?: "no informado por la ECU (PID 51)"}",
+                    fontSize = 14.sp,
+                    color = Palette.TextPrimary,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("Sensores O₂ presentes (PID 13):", fontSize = 13.sp, color = Palette.TextSecondary)
+                Spacer(Modifier.height(4.dp))
+                when {
+                    diag.oxygenSensorsPresent == null -> Text(
+                        "La ECU no anunció el PID 13 o no respondió.",
                         fontSize = 12.sp,
                         color = Palette.TextMuted,
                     )
-                    Spacer(Modifier.height(6.dp))
-                    st.monitors.forEach { mon ->
-                        val (icon, color, label) = when {
-                            !mon.available -> Triple(Icons.Rounded.RemoveCircleOutline, Palette.TextMuted, "No aplica")
-                            mon.complete -> Triple(Icons.Rounded.CheckCircle, Palette.Green, "Listo")
-                            else -> Triple(Icons.Rounded.HourglassEmpty, Palette.Amber, "Incompleto")
-                        }
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedMonitor = mon }
-                                .padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(10.dp))
-                            Text(mon.name, fontSize = 14.sp, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
-                            Text(label, fontSize = 13.sp, color = color)
+                    diag.oxygenSensorsPresent.isEmpty() -> Text(
+                        "La máscara de presencia no marcó sensores instalados.",
+                        fontSize = 12.sp,
+                        color = Palette.TextMuted,
+                    )
+                    else -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        diag.oxygenSensorsPresent.forEach { sensor ->
+                            Pill("B${sensor.bank}S${sensor.position}", Palette.Cyan)
                         }
                     }
                 }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "PID 13 usa un byte para hasta dos bancos (B1/B2). Los vehículos con más bancos utilizan la máscara estándar del PID 1D.",
+                    fontSize = 11.sp,
+                    color = Palette.TextMuted,
+                )
             }
         }
 
@@ -356,7 +385,7 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Freno: el estado del pedal, presión hidráulica y datos ABS/ESP no tienen una lectura universal OBD-II de motor. Se requiere acceso al módulo y parámetros específicos $vehicleMakeQualifier; este resultado no permite concluir que el sensor o los frenos estén fallando.",
+                    "Freno: el estado del pedal, presión hidráulica y datos ABS/ESP no tienen una lectura universal OBD-II de motor. Se requiere acceso al módulo y parámetros específicos del vehículo; este resultado no permite concluir que el sensor o los frenos estén fallando.",
                     fontSize = 12.sp,
                     color = Palette.TextSecondary,
                     lineHeight = 17.sp,
@@ -436,6 +465,42 @@ fun DiagnosticsScreen(vm: MainViewModel, conn: ConnState, onGoConnect: () -> Uni
 
     if (showFuelGuide) {
         FuelTrimLambdaGuideDialog(onDismiss = { showFuelGuide = false })
+    }
+}
+
+@Composable
+private fun ReadinessCard(title: String, status: VehicleStatus, onMonitorClick: (MonitorStatus) -> Unit) {
+    SectionCard(title = title) {
+        Text(
+            buildString {
+                append(if (status.compressionIgnition) "Diésel" else "Gasolina")
+                append(" · MIL ")
+                append(if (status.milOn) "encendido" else "apagado")
+                append(" · ${status.dtcCount} DTC")
+            },
+            fontSize = 12.sp,
+            color = Palette.TextMuted,
+        )
+        Spacer(Modifier.height(6.dp))
+        status.monitors.forEach { monitor ->
+            val (icon, color, label) = when {
+                !monitor.available -> Triple(Icons.Rounded.RemoveCircleOutline, Palette.TextMuted, "No aplica")
+                monitor.ready -> Triple(Icons.Rounded.CheckCircle, Palette.Green, "Listo")
+                else -> Triple(Icons.Rounded.HourglassEmpty, Palette.Amber, "Incompleto")
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onMonitorClick(monitor) }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(monitor.name, fontSize = 14.sp, color = Palette.TextPrimary, modifier = Modifier.weight(1f))
+                Text(label, fontSize = 13.sp, color = color)
+            }
+        }
     }
 }
 

@@ -23,10 +23,15 @@ La app consulta los PIDs soportados por la ECU (0100, 0120, 0140…) y solo mues
 - **IMU del teléfono**: muestra aceleración lineal, giro y orientación del celular, con calibración en reposo. No se confunde con sensores del ABS/EPS.
 - **Alertas y explicación de sensores**: cada lectura incluye su descripción y una alerta si sale del rango orientativo. La app aclara que no puede certificar la calibración de una ECU.
 - **Viajes configurables**: permite elegir las columnas de sensores del CSV; velocidad y consumo también se leen internamente para estadísticas.
-- **Ruta del viaje**: permite guardar opcionalmente latitud, longitud y precisión GPS en el CSV. La ubicación se solicita solo si se activa esta opción; para registrar puntos, mantén la app visible y la ubicación del teléfono activa.
+- **Ruta del viaje**: permite guardar opcionalmente latitud, longitud y precisión GPS en el CSV. La ubicación se solicita solo si se activa esta opción; la app mantiene la captura con un servicio en primer plano mientras se graba.
 - **Diagnóstico explicado**: al tocar un código o monitor se explica su significado y por qué puede figurar como "Incompleto" o "No aplica". Se detallan también los módulos que el ELM327 detecta y los límites para ABS/ESP, EPS, SRS o TCM.
-- **Cobertura de sensores**: la temperatura del aceite depende de que la ECU exponga el PID estándar 01 5C; freno/ABS suele requerir diagnóstico Subaru específico y un adaptador compatible.
+- **Cobertura de sensores**: la temperatura del aceite depende de que la ECU exponga el PID estándar 01 5C; freno/ABS suele requerir diagnóstico específico del vehículo y un adaptador compatible.
 - **Timón y ABS/EPS**: explica que el ángulo real de dirección suele requerir datos propietarios y herramientas compatibles, y permite buscar información del vehículo.
+- **Readiness y decodificación Mode 1**: analiza los PID 01 y 41 como estados de monitores listos/no listos; muestra sensores O₂ del PID 13 y tipo de combustible enumerado del PID 51 en tarjetas legibles.
+- **Ficha de HP y torque**: cada perfil admite HP y Nm máximos, con sus RPM opcionales. Se pueden buscar las especificaciones en internet; si no se conocen las RPM, la app las aproxima para la curva calculada.
+- **Tablero configurable**: mantén presionado cualquier medidor para elegir otra variable; las posiciones se guardan en los ajustes.
+- **Alertas de operación**: avisa tras varias lecturas consecutivas por refrigerante/aceite excesivos, ajustes STFT/LTFT extremos o mezcla Lambda/AFR fuera de los límites orientativos. Los umbrales no reemplazan la ficha del fabricante.
+- **Viaje en segundo plano**: al iniciar el registro se usa un servicio en primer plano y un bloqueo parcial de CPU para continuar sondeando el adaptador con la pantalla apagada. Se muestra una notificación persistente y consume más batería mientras graba. Los CSV incluyen el nombre del vehículo/perfil.
 
 La app conserva el nombre **OBD Pulse**.
 

@@ -521,7 +521,7 @@ object PidNames {
         0x3A to "Lambda sonda B2S3 (corriente)",
         0x3B to "Lambda sonda B2S4 (corriente)",
         0x3F to "Temperatura del catalizador B2S2",
-        0x41 to "Estado de monitores en este ciclo",
+        0x41 to "Estado de monitores desde borrado de códigos",
         0x4B to "Posición del pedal F",
         0x4F to "Valores máximos de lambda, voltaje, corriente y MAP",
         0x50 to "Valor máximo del sensor MAF",

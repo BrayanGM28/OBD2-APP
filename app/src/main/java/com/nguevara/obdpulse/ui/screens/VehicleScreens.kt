@@ -707,15 +707,24 @@ fun VehicleEditorDialog(vm: MainViewModel, initial: VehicleProfile, isNew: Boole
     val db by vm.vehicleDb.collectAsStateWithLifecycle()
     var p by remember { mutableStateOf(initial) }
     var vinText by remember { mutableStateOf(initial.vin.orEmpty()) }
+    var torqueNmText by remember(initial.id) {
+        mutableStateOf(initial.torqueNm?.let { String.format(Locale.US, "%.1f", it) }.orEmpty())
+    }
     var vinBusy by remember { mutableStateOf(false) }
     var vinResult by remember { mutableStateOf<String?>(null) }
     var showProtocols by remember { mutableStateOf(false) }
     val rec = remember(p, db) { vm.recommendation(p) }
     val currentYear = remember { Calendar.getInstance().get(Calendar.YEAR) }
+    val parsedTorqueNm = torqueNmText.replace(',', '.').toDoubleOrNull()
+    val torqueNmIsValid = torqueNmText.isBlank() || parsedTorqueNm?.let { it in 1.0..5000.0 } == true
 
     fun save() {
         if (p.make.isBlank()) {
             vm.notify("Escribe al menos la marca del vehículo.")
+            return
+        }
+        if (!torqueNmIsValid) {
+            vm.notify("El torque debe estar entre 1 y 5000 Nm.")
             return
         }
         vm.saveProfile(
@@ -724,6 +733,7 @@ fun VehicleEditorDialog(vm: MainViewModel, initial: VehicleProfile, isNew: Boole
                 model = p.model.trim(),
                 version = p.version.trim(),
                 engine = p.engine.trim(),
+                torqueNm = parsedTorqueNm,
                 vin = vinText.trim().uppercase(Locale.US).ifBlank { null },
             ),
             activate = true,
@@ -880,6 +890,65 @@ fun VehicleEditorDialog(vm: MainViewModel, initial: VehicleProfile, isNew: Boole
                         color = Palette.TextMuted,
                     )
                     Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = p.hp?.toString().orEmpty(),
+                            onValueChange = { p = p.copy(hp = it.toIntOrNull()?.coerceIn(1, 1500)) },
+                            label = { Text("HP máximos") },
+                            suffix = { Text("hp") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = p.hpRpm?.toString().orEmpty(),
+                            onValueChange = { p = p.copy(hpRpm = it.toIntOrNull()?.coerceIn(1, 20000)) },
+                            label = { Text("A RPM") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = torqueNmText,
+                            onValueChange = { torqueNmText = it },
+                            label = { Text("Torque máximo") },
+                            suffix = { Text("Nm") },
+                            isError = !torqueNmIsValid,
+                            supportingText = if (torqueNmIsValid) null else {
+                                { Text("Ingresa un valor entre 1 y 5000 Nm.") }
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = p.torqueRpm?.toString().orEmpty(),
+                            onValueChange = { p = p.copy(torqueRpm = it.toIntOrNull()?.coerceIn(1, 20000)) },
+                            label = { Text("A RPM") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Text(
+                        "Si no conoces las RPM, deja esos campos vacíos. Puedes buscar la ficha técnica; con HP y Nm sin RPM se usará una curva estimada.",
+                        fontSize = 11.sp,
+                        color = Palette.TextMuted,
+                    )
+                    TextButton(
+                        onClick = {
+                            val query = "${p.make} ${p.model} ${p.year} ${p.engine} potencia torque HP Nm RPM ficha técnica".trim()
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}")),
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Rounded.Language, contentDescription = null)
+                        Text("Buscar ficha técnica en internet")
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         FieldLabel("Peso estimado (kg)", Modifier.weight(1f))
                         Text(p.weightKg?.let { "$it kg" } ?: "1300 kg (por defecto)", style = NumberStyle, color = Palette.Cyan)

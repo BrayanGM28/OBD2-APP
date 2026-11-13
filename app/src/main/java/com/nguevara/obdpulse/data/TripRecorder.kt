@@ -46,11 +46,17 @@ class TripRecorder(private val dir: File) {
         @Synchronized get() = columns.mapTo(linkedSetOf()) { it.key }
 
     @Synchronized
-    fun start(columns: List<Metric>, recordGps: Boolean = false) {
+    fun start(columns: List<Metric>, recordGps: Boolean = false, vehicleName: String? = null) {
         stop()
         dir.mkdirs()
         val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-        val file = File(dir, "viaje_$stamp.csv")
+        val safeVehicleName = vehicleName
+            ?.trim()
+            ?.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+            ?.trim('_')
+            ?.takeIf { it.isNotBlank() }
+        val vehicleSuffix = safeVehicleName?.let { "_$it" }.orEmpty()
+        val file = File(dir, "viaje_$stamp$vehicleSuffix.csv")
         this.columns = columns
         writer = file.bufferedWriter().also { w ->
             val header = listOf("fecha_hora", "segundos") +
