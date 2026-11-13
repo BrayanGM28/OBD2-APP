@@ -1074,7 +1074,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         try {
-            TripRecordingService.start(getApplication(), recordGps = locationProvider != null)
+            val device = (_conn.value as? ConnState.Connected)?.device
+            TripRecordingService.start(
+                getApplication(),
+                recordGps = locationProvider != null,
+                connectedDevice = device != null && device.type != LinkType.DEMO,
+            )
         } catch (ex: IllegalStateException) {
             _toasts.tryEmit("Android no permitió mantener activo el registro: ${ex.message ?: "servicio en segundo plano no disponible"}.")
             return false

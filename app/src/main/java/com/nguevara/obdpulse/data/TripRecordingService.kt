@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -23,13 +24,34 @@ class TripRecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
         val recordGps = intent?.getBooleanExtra(EXTRA_RECORD_GPS, false) == true
-        val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
-                if (recordGps) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        val connectedDevice = intent?.getBooleanExtra(EXTRA_CONNECTED_DEVICE, false) == true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val locationType = if (recordGps) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+            val primaryType = if (connectedDevice) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            }
+            try {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification(recordGps),
+                    primaryType or locationType,
+                )
+            } catch (ex: SecurityException) {
+                if (!connectedDevice) throw ex
+                Log.w(TAG, "No se pudo usar el tipo connectedDevice; se usará dataSync.", ex)
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification(recordGps),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or locationType,
+                )
+            }
         } else {
-            0
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(recordGps), 0)
         }
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(recordGps), serviceType)
         acquireWakeLock()
         return START_NOT_STICKY
     }
@@ -84,10 +106,13 @@ class TripRecordingService : Service() {
         private const val CHANNEL_ID = "trip_recording"
         private const val NOTIFICATION_ID = 1201
         private const val EXTRA_RECORD_GPS = "record_gps"
+        private const val EXTRA_CONNECTED_DEVICE = "connected_device"
+        private const val TAG = "TripRecordingService"
 
-        fun start(context: Context, recordGps: Boolean) {
+        fun start(context: Context, recordGps: Boolean, connectedDevice: Boolean) {
             val intent = Intent(context, TripRecordingService::class.java)
                 .putExtra(EXTRA_RECORD_GPS, recordGps)
+                .putExtra(EXTRA_CONNECTED_DEVICE, connectedDevice)
             ContextCompat.startForegroundService(context, intent)
         }
 
